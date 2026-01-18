@@ -1,6 +1,9 @@
 //! Route transition animations
+//!
+//! This module provides a transition system for route changes,
+//! allowing separate enter and exit animations for incoming and outgoing content.
 
-use gpui::{div, px, AnyElement, Div, IntoElement, ParentElement, Styled};
+use gpui::{div, px, Div, IntoElement, ParentElement, Styled};
 use std::time::Duration;
 
 /// Direction for slide transitions
@@ -36,19 +39,6 @@ pub enum Transition {
         /// Duration in milliseconds
         duration_ms: u64,
     },
-
-    /// Scale transition (zoom in/out)
-    Scale {
-        /// Start scale (0.0 to 1.0)
-        from: f32,
-        /// End scale (0.0 to 1.0)
-        to: f32,
-        /// Duration in milliseconds
-        duration_ms: u64,
-    },
-
-    /// Custom transition animation
-    Custom(Box<dyn TransitionAnimation>),
 }
 
 impl std::fmt::Debug for Transition {
@@ -67,17 +57,6 @@ impl std::fmt::Debug for Transition {
                 .field("direction", direction)
                 .field("duration_ms", duration_ms)
                 .finish(),
-            Self::Scale {
-                from,
-                to,
-                duration_ms,
-            } => f
-                .debug_struct("Transition::Scale")
-                .field("from", from)
-                .field("to", to)
-                .field("duration_ms", duration_ms)
-                .finish(),
-            Self::Custom(_) => write!(f, "Transition::Custom(..)"),
         }
     }
 }
@@ -96,78 +75,9 @@ impl Clone for Transition {
                 direction: *direction,
                 duration_ms: *duration_ms,
             },
-            Self::Scale {
-                from,
-                to,
-                duration_ms,
-            } => Self::Scale {
-                from: *from,
-                to: *to,
-                duration_ms: *duration_ms,
-            },
-            // Custom transitions cannot be cloned, return None instead
-            Self::Custom(_) => Self::None,
         }
     }
 }
-
-/// Trait for custom transition animations
-///
-/// Implement this trait to create custom route transition effects.
-///
-/// # Example
-///
-/// ```no_run
-/// use gpui_router::TransitionAnimation;
-/// use gpui::AnyElement;
-/// use std::time::Duration;
-///
-/// struct CustomFade;
-///
-/// impl TransitionAnimation for CustomFade {
-///     fn animate(
-///         &self,
-///         old_view: Option<AnyElement>,
-///         new_view: AnyElement,
-///         progress: f32,
-///     ) -> AnyElement {
-///         // Custom fade implementation
-///         new_view
-///     }
-///
-///     fn duration(&self) -> Duration {
-///         Duration::from_millis(300)
-///     }
-/// }
-/// ```
-pub trait TransitionAnimation: Send + Sync {
-    /// Apply the transition animation
-    ///
-    /// # Arguments
-    /// * `old_view` - The view being transitioned from (None if first navigation)
-    /// * `new_view` - The view being transitioned to
-    /// * `progress` - Animation progress from 0.0 to 1.0
-    ///
-    /// # Returns
-    /// The animated element to render
-    fn animate(
-        &self,
-        old_view: Option<AnyElement>,
-        new_view: AnyElement,
-        progress: f32,
-    ) -> AnyElement;
-
-    /// Duration of the transition
-    fn duration(&self) -> Duration;
-
-    /// Optional name for debugging
-    fn name(&self) -> &str {
-        "CustomTransition"
-    }
-}
-
-/// Type-erased transition animation
-pub type BoxedTransition = Box<dyn TransitionAnimation>;
 
 impl Transition {
     /// Create a fade transition
@@ -207,41 +117,12 @@ impl Transition {
         }
     }
 
-    /// Create a scale transition
-    pub fn scale(from: f32, to: f32, duration_ms: u64) -> Self {
-        Self::Scale {
-            from,
-            to,
-            duration_ms,
-        }
-    }
-
-    /// Create a zoom-in transition
-    pub fn zoom_in(duration_ms: u64) -> Self {
-        Self::Scale {
-            from: 0.5,
-            to: 1.0,
-            duration_ms,
-        }
-    }
-
-    /// Create a zoom-out transition
-    pub fn zoom_out(duration_ms: u64) -> Self {
-        Self::Scale {
-            from: 1.0,
-            to: 0.8,
-            duration_ms,
-        }
-    }
-
     /// Get the duration of this transition
     pub fn duration(&self) -> Duration {
         match self {
             Self::None => Duration::ZERO,
             Self::Fade { duration_ms, .. } => Duration::from_millis(*duration_ms),
             Self::Slide { duration_ms, .. } => Duration::from_millis(*duration_ms),
-            Self::Scale { duration_ms, .. } => Duration::from_millis(*duration_ms),
-            Self::Custom(animation) => animation.duration(),
         }
     }
 
@@ -337,14 +218,6 @@ pub fn apply_transition(element: impl IntoElement, transition: &Transition, prog
             };
             (x, y, progress)
         }
-
-        Transition::Scale { from, to, .. } => {
-            let _scale = from + (to - from) * progress;
-            // TODO: GPUI doesn't have direct scale support yet
-            (0.0, 0.0, progress)
-        }
-
-        Transition::Custom(_) => (0.0, 0.0, progress),
     };
 
     // Unified return type - same method chain for all branches
@@ -408,31 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn test_transition_scale() {
-        let transition = Transition::scale(0.5, 1.0, 250);
-        assert!(!transition.is_none());
-        assert_eq!(transition.duration(), Duration::from_millis(250));
-
-        if let Transition::Scale { from, to, .. } = transition {
-            assert_eq!(from, 0.5);
-            assert_eq!(to, 1.0);
-        } else {
-            panic!("Expected Scale transition");
-        }
-    }
-
-    #[test]
-    fn test_transition_zoom_in() {
-        let transition = Transition::zoom_in(200);
-        if let Transition::Scale { from, to, .. } = transition {
-            assert_eq!(from, 0.5);
-            assert_eq!(to, 1.0);
-        } else {
-            panic!("Expected Scale transition");
-        }
-    }
-
-    #[test]
     fn test_transition_config_default() {
         let config = TransitionConfig::default();
         assert!(config.active().is_none());
@@ -467,7 +315,5 @@ mod tests {
         let _ = Transition::slide_right(300);
         let _ = Transition::slide_up(300);
         let _ = Transition::slide_down(300);
-        let _ = Transition::zoom_in(250);
-        let _ = Transition::zoom_out(250);
     }
 }

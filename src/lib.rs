@@ -168,9 +168,7 @@ pub use route::{
 };
 pub use state::{Router, RouterState};
 #[cfg(feature = "transition")]
-pub use transition::{
-    BoxedTransition, SlideDirection, Transition, TransitionAnimation, TransitionConfig,
-};
+pub use transition::{SlideDirection, Transition, TransitionConfig};
 pub use widgets::{
     render_router_outlet, router_link, router_outlet, router_outlet_named, RouterLink, RouterOutlet,
 };

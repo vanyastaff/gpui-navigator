@@ -46,12 +46,6 @@ fn main() {
                     .name("slide-down")
                     .transition(Transition::slide_down(1000)), // 1 секунда
             );
-
-            router.add_route(
-                Route::new("/zoom", |_, _| zoom_page().into_any_element())
-                    .name("zoom")
-                    .transition(Transition::zoom_in(1000)), // 1 секунда
-            );
         });
 
         // Create and open window
@@ -177,13 +171,6 @@ fn sidebar(
             &current_path,
             outlet.clone(),
         ))
-        .child(nav_button(
-            cx,
-            "Zoom In",
-            "/zoom",
-            &current_path,
-            outlet.clone(),
-        ))
         .child(div().h_px().bg(rgb(0xe0e0e0)).my_4())
         .child(
             div()
@@ -281,15 +268,6 @@ fn slide_down_page() -> impl IntoElement {
         "Transition::slide_down(300) - Page slides from bottom to top.".to_string(),
         rgb(0x00bcd4),
         rgb(0xe0f7fa), // Light cyan background
-    )
-}
-
-fn zoom_page() -> impl IntoElement {
-    page_container(
-        "Zoom In".to_string(),
-        "Transition::zoom_in(300) - Page zooms from 0.8 to 1.0 scale.".to_string(),
-        rgb(0x673ab7),
-        rgb(0xede7f6), // Light deep purple background
     )
 }
 

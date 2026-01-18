@@ -15,460 +15,10 @@ use gpui::{div, AnyElement, App, Div, IntoElement, ParentElement, SharedString, 
 use gpui::{relative, Animation, AnimationExt};
 
 #[cfg(feature = "transition")]
+use gpui::prelude::FluentBuilder;
+
+#[cfg(feature = "transition")]
 use std::time::Duration;
-
-#[cfg(feature = "transition")]
-/// Creates a slide animation wrapper for the given content.
-/// Uses relative positioning to ensure animation works correctly when window is resized.
-/// - Outer div: absolute positioned container with overflow hidden
-/// - Inner div: animated with relative() units so it adapts to parent size changes
-fn create_slide_wrapper(
-    content: AnyElement,
-    animation_id: SharedString,
-    duration_ms: u64,
-    start_offset_fraction: f32,
-    position_fn: impl Fn(Div, f32) -> Div + 'static,
-    direction_name: &'static str,
-) -> impl IntoElement {
-    // Outer container clips the animation
-    div().absolute().w_full().h_full().overflow_hidden().child(
-        // Inner animated wrapper
-        div()
-            .absolute()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(content)
-            .with_animation(
-                animation_id,
-                Animation::new(Duration::from_millis(duration_ms)),
-                move |this, delta| {
-                    let progress = 1.0 - delta.clamp(0.0, 1.0);
-                    let offset_fraction = start_offset_fraction * progress;
-                    debug_log!(
-                        "{} animation: delta={:.3}, offset_fraction={:.3}",
-                        direction_name,
-                        delta,
-                        offset_fraction
-                    );
-                    position_fn(this, offset_fraction)
-                },
-            ),
-    )
-}
-
-#[cfg(feature = "transition")]
-/// Helper function to build animated route content
-/// This is similar to render_animated_box in gpui_animations_test.rs
-fn build_animated_route_content(
-    cx: &mut App,
-    window: &mut Window,
-    builder: Option<&crate::route::RouteBuilder>,
-    params: &crate::RouteParams,
-    animation_id: SharedString,
-    transition: &Transition,
-    duration_ms: u64,
-) -> AnyElement {
-    // First, build the base content from the route builder
-    let content = if let Some(builder) = builder {
-        debug_log!("Building route content");
-        builder(cx, params)
-    } else {
-        debug_log!("No builder - using fallback");
-        div().child("No route matched").into_any_element()
-    };
-
-    // If no animation needed, return content directly
-    if duration_ms == 0 {
-        return div().child(content).into_any_element();
-    }
-
-    debug_log!(
-        "Animation: id={}, duration={}ms, type={:?}",
-        animation_id,
-        duration_ms,
-        transition
-    );
-
-    // Apply animation to content based on transition type
-    match transition {
-        Transition::Fade { .. } => div()
-            .child(content)
-            .opacity(0.0)
-            .with_animation(
-                animation_id,
-                Animation::new(Duration::from_millis(duration_ms)),
-                |this, delta| {
-                    trace_log!("Fade delta={:.3}", delta);
-                    this.opacity(delta.clamp(0.0, 1.0))
-                },
-            )
-            .into_any_element(),
-
-        Transition::Slide { direction, .. } => {
-            let direction = *direction;
-
-            // Use percentage-based offset (1.0 = 100% of parent size)
-            // This ensures animation adapts to window resize
-            let animated_wrapper = match direction {
-                SlideDirection::Left => create_slide_wrapper(
-                    content,
-                    animation_id.clone(),
-                    duration_ms,
-                    -1.0, // -100%
-                    |div, offset_fraction| div.left(relative(offset_fraction)),
-                    "Slide Left",
-                )
-                .into_any_element(),
-
-                SlideDirection::Right => create_slide_wrapper(
-                    content,
-                    animation_id.clone(),
-                    duration_ms,
-                    1.0, // 100%
-                    |div, offset_fraction| div.left(relative(offset_fraction)),
-                    "Slide Right",
-                )
-                .into_any_element(),
-
-                SlideDirection::Up => create_slide_wrapper(
-                    content,
-                    animation_id.clone(),
-                    duration_ms,
-                    -1.0, // -100%
-                    |div, offset_fraction| div.top(relative(offset_fraction)),
-                    "Slide Up",
-                )
-                .into_any_element(),
-
-                SlideDirection::Down => create_slide_wrapper(
-                    content,
-                    animation_id.clone(),
-                    duration_ms,
-                    1.0, // 100%
-                    |div, offset_fraction| div.top(relative(offset_fraction)),
-                    "Slide Down",
-                )
-                .into_any_element(),
-            };
-
-            // Wrap in overflow container to clip content during animation
-            div()
-                .relative()
-                .w_full()
-                .h_full()
-                .overflow_hidden()
-                .child(animated_wrapper)
-                .into_any_element()
-        }
-
-        Transition::Scale { from, to, .. } => {
-            let from = *from;
-            let to = *to;
-
-            // Get viewport size to calculate absolute dimensions for scaling
-            let viewport_size = window.viewport_size();
-            let viewport_width = viewport_size.width;
-            let viewport_height = viewport_size.height;
-
-            // Create zoom effect by animating absolute width/height
-            div()
-                .absolute()
-                .w_full()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(content)
-                        .with_animation(
-                            animation_id,
-                            Animation::new(Duration::from_millis(duration_ms)),
-                            move |this, delta| {
-                                debug_log!("Zoom animation: delta={:.3}", delta);
-                                let delta = delta.clamp(0.0, 1.0);
-                                // Calculate scale: interpolate from 'from' to 'to'
-                                let scale = from + (to - from) * delta;
-                                // Scale by absolute pixel dimensions
-                                let width = viewport_width * scale;
-                                let height = viewport_height * scale;
-                                this.w(width).h(height).opacity(delta)
-                            },
-                        ),
-                )
-                .into_any_element()
-        }
-
-        Transition::Custom(_) => div()
-            .child(content)
-            .opacity(0.0)
-            .with_animation(
-                animation_id,
-                Animation::new(Duration::from_millis(duration_ms)),
-                |this, delta| {
-                    trace_log!("Custom delta={:.3}", delta);
-                    this.opacity(delta.clamp(0.0, 1.0))
-                },
-            )
-            .into_any_element(),
-
-        Transition::None => div().child(content).into_any_element(),
-    }
-}
-
-#[cfg(feature = "transition")]
-/// Build content with EXIT animation (old content leaving)
-fn build_exit_animated_content(
-    cx: &mut App,
-    window: &mut Window,
-    builder: Option<&crate::route::RouteBuilder>,
-    params: &crate::RouteParams,
-    animation_id: SharedString,
-    transition: &Transition,
-    duration_ms: u64,
-) -> AnyElement {
-    let content = if let Some(builder) = builder {
-        builder(cx, params)
-    } else {
-        div().child("No route matched").into_any_element()
-    };
-
-    if duration_ms == 0 {
-        return div().child(content).into_any_element();
-    }
-
-    match transition {
-        Transition::Fade { .. } => div()
-            .absolute()
-            .w_full()
-            .h_full()
-            .child(content)
-            .with_animation(
-                animation_id,
-                Animation::new(Duration::from_millis(duration_ms)),
-                |this, delta| {
-                    // Reverse: start at 1.0, end at 0.0
-                    let opacity = 1.0 - delta.clamp(0.0, 1.0);
-                    this.opacity(opacity)
-                },
-            )
-            .into_any_element(),
-
-        Transition::Slide { direction, .. } => match direction {
-            SlideDirection::Right => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                -1.0, // Exit left
-                |div, offset_fraction| div.left(relative(offset_fraction)),
-                "Exit Left",
-            )
-            .into_any_element(),
-            SlideDirection::Left => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                1.0, // Exit right
-                |div, offset_fraction| div.left(relative(offset_fraction)),
-                "Exit Right",
-            )
-            .into_any_element(),
-            SlideDirection::Down => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                -1.0, // Exit up
-                |div, offset_fraction| div.top(relative(offset_fraction)),
-                "Exit Up",
-            )
-            .into_any_element(),
-            SlideDirection::Up => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                1.0, // Exit down
-                |div, offset_fraction| div.top(relative(offset_fraction)),
-                "Exit Down",
-            )
-            .into_any_element(),
-        },
-
-        Transition::Scale { from, to, .. } => {
-            let from = *from;
-            let to = *to;
-            let viewport_size = window.viewport_size();
-            let viewport_width = viewport_size.width;
-            let viewport_height = viewport_size.height;
-
-            div()
-                .absolute()
-                .w_full()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(content)
-                .with_animation(
-                    animation_id,
-                    Animation::new(Duration::from_millis(duration_ms)),
-                    move |this, delta| {
-                        let delta = delta.clamp(0.0, 1.0);
-                        // Reverse scale: from 'to' to 'from'
-                        let scale = to - (to - from) * delta;
-                        let width = viewport_width * scale;
-                        let height = viewport_height * scale;
-                        this.w(width).h(height).opacity(1.0 - delta)
-                    },
-                )
-                .into_any_element()
-        }
-
-        _ => div()
-            .absolute()
-            .w_full()
-            .h_full()
-            .child(content)
-            .into_any_element(),
-    }
-}
-
-#[cfg(feature = "transition")]
-/// Build content with ENTER animation (new content arriving)
-fn build_enter_animated_content(
-    cx: &mut App,
-    window: &mut Window,
-    builder: Option<&crate::route::RouteBuilder>,
-    params: &crate::RouteParams,
-    animation_id: SharedString,
-    transition: &Transition,
-    duration_ms: u64,
-) -> AnyElement {
-    let content = if let Some(builder) = builder {
-        builder(cx, params)
-    } else {
-        div().child("No route matched").into_any_element()
-    };
-
-    if duration_ms == 0 {
-        return div().child(content).into_any_element();
-    }
-
-    match transition {
-        Transition::Fade { .. } => div()
-            .absolute()
-            .w_full()
-            .h_full()
-            .child(content)
-            .opacity(0.0)
-            .with_animation(
-                animation_id,
-                Animation::new(Duration::from_millis(duration_ms)),
-                |this, delta| this.opacity(delta.clamp(0.0, 1.0)),
-            )
-            .into_any_element(),
-
-        Transition::Slide { direction, .. } => match direction {
-            SlideDirection::Left => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                -1.0,
-                |div, offset_fraction| div.left(relative(offset_fraction)),
-                "Enter Left",
-            )
-            .into_any_element(),
-            SlideDirection::Right => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                1.0,
-                |div, offset_fraction| div.left(relative(offset_fraction)),
-                "Enter Right",
-            )
-            .into_any_element(),
-            SlideDirection::Up => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                -1.0,
-                |div, offset_fraction| div.top(relative(offset_fraction)),
-                "Enter Up",
-            )
-            .into_any_element(),
-            SlideDirection::Down => create_slide_wrapper(
-                content,
-                animation_id,
-                duration_ms,
-                1.0,
-                |div, offset_fraction| div.top(relative(offset_fraction)),
-                "Enter Down",
-            )
-            .into_any_element(),
-        },
-
-        Transition::Scale { from, to, .. } => {
-            let from = *from;
-            let to = *to;
-            let viewport_size = window.viewport_size();
-            let viewport_width = viewport_size.width;
-            let viewport_height = viewport_size.height;
-
-            div()
-                .absolute()
-                .w_full()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(content)
-                .with_animation(
-                    animation_id,
-                    Animation::new(Duration::from_millis(duration_ms)),
-                    move |this, delta| {
-                        let delta = delta.clamp(0.0, 1.0);
-                        let scale = from + (to - from) * delta;
-                        let width = viewport_width * scale;
-                        let height = viewport_height * scale;
-                        this.w(width).h(height).opacity(delta)
-                    },
-                )
-                .into_any_element()
-        }
-
-        _ => div()
-            .absolute()
-            .w_full()
-            .h_full()
-            .child(content)
-            .into_any_element(),
-    }
-}
-
-#[cfg(not(feature = "transition"))]
-/// Helper function to build route content without animation (transition feature disabled)
-fn build_animated_route_content(
-    cx: &mut App,
-    _window: &mut Window,
-    builder: Option<&crate::route::RouteBuilder>,
-    params: &crate::RouteParams,
-    _animation_id: SharedString,
-    _transition: &(),
-    _duration_ms: u64,
-) -> AnyElement {
-    // No animation support - just build the content directly
-    if let Some(builder) = builder {
-        builder(cx, params)
-    } else {
-        div().child("No route matched").into_any_element()
-    }
-}
 
 /// RouterOutlet component that renders the active child route
 ///
@@ -562,9 +112,6 @@ struct PreviousRoute {
     path: String,
     params: crate::RouteParams,
     builder: Option<crate::route::RouteBuilder>,
-    #[cfg(feature = "transition")]
-    transition: crate::transition::Transition,
-    animation_counter: u32,
 }
 
 impl Default for OutletState {
@@ -589,13 +136,9 @@ impl Render for RouterOutlet {
         let state_key = SharedString::from(format!("outlet_{:?}", self.name));
         let state = window.use_keyed_state(state_key.clone(), cx, |_, _| OutletState::default());
 
-        let (prev_path, animation_counter, prev_route_data) = {
+        let (prev_path, animation_counter) = {
             let guard = state.read(cx);
-            (
-                guard.current_path.clone(),
-                guard.animation_counter,
-                guard.previous_route.clone(),
-            )
+            (guard.current_path.clone(), guard.animation_counter)
         };
 
         // Get current router info
@@ -698,16 +241,18 @@ impl Render for RouterOutlet {
 
             // Update state and save previous route for exit animation
             state.update(cx, |s, _| {
-                // Save CURRENT (old) route data as previous (if not initial)
+                // When path changes, replace previous_route with current route data
+                // This way, the old previous_route (from a previous transition) is discarded
+                // and we only keep the immediately previous route for the current transition
                 if !is_initial {
                     s.previous_route = Some(PreviousRoute {
                         path: s.current_path.clone(),
                         params: s.current_params.clone(),
                         builder: s.current_builder.clone(),
-                        #[cfg(feature = "transition")]
-                        transition: s.current_transition.clone(),
-                        animation_counter: s.animation_counter,
                     });
+                } else {
+                    // Initial navigation - no previous route
+                    s.previous_route = None;
                 }
                 // Update state with NEW route data
                 s.current_path = router_path.clone();
@@ -733,9 +278,7 @@ impl Render for RouterOutlet {
             let duration_ms = match &route_transition {
                 Transition::Fade { duration_ms, .. } => *duration_ms,
                 Transition::Slide { duration_ms, .. } => *duration_ms,
-                Transition::Scale { duration_ms, .. } => *duration_ms,
                 Transition::None => 0,
-                Transition::Custom(_) => 300,
             };
 
             debug_log!(
@@ -746,53 +289,243 @@ impl Render for RouterOutlet {
             );
 
             // Get previous route info for exit animation
-            let previous_route = state.read(cx).previous_route.clone();
+            // Show it if it exists and its path differs from current path
+            // (if paths are same, no transition is needed)
+            let previous_route = state
+                .read(cx)
+                .previous_route
+                .as_ref()
+                .filter(|prev| prev.path != router_path)
+                .cloned();
+
+            debug_log!(
+                "Previous route exists: {}, path: {:?}",
+                previous_route.is_some(),
+                previous_route.as_ref().map(|p| &p.path)
+            );
 
             // Build container with both old (exiting) and new (entering) content
-            div()
-                .relative()
-                .w_full()
-                .h_full()
-                .child(
-                    // Stack both elements
+            // For SLIDE transitions, use a different approach
+            match &route_transition {
+                Transition::Slide { direction, .. } => {
+                    // Build OLD content (no animation wrapper, just the content)
+                    let old_content = previous_route.map(|prev| {
+                        if let Some(builder) = prev.builder.as_ref() {
+                            builder(cx, &prev.params)
+                        } else {
+                            div().child("No route matched").into_any_element()
+                        }
+                    });
+
+                    // Build NEW content (no animation wrapper, just the content)
+                    let new_content = if let Some(builder) = builder_opt.as_ref() {
+                        builder(cx, &route_params)
+                    } else {
+                        div().child("No route matched").into_any_element()
+                    };
+
+                    // Create animated container that holds BOTH elements side-by-side
+                    let animation_id = SharedString::from(format!(
+                        "outlet_slide_{:?}_{}",
+                        self.name, animation_counter
+                    ));
+
+                    match direction {
+                        SlideDirection::Left | SlideDirection::Right => {
+                            // Horizontal slide: use absolute positioning for proper side-by-side layout
+                            let is_left = matches!(direction, SlideDirection::Left);
+
+                            div()
+                                .relative()
+                                .w_full()
+                                .h_full()
+                                .overflow_hidden()
+                                // Old content (exits to left for SlideLeft, or stays for SlideRight)
+                                .when_some(old_content, |container, old| {
+                                    container.child(
+                                        div()
+                                            .absolute()
+                                            .w_full()
+                                            .h_full()
+                                            .child(old)
+                                            .left(relative(0.0)) // Starts at normal position
+                                            .with_animation(
+                                                animation_id.clone(),
+                                                Animation::new(Duration::from_millis(duration_ms)),
+                                                move |this, delta| {
+                                                    let progress = delta.clamp(0.0, 1.0);
+                                                    // Old content exits
+                                                    let offset = if is_left {
+                                                        -progress // SlideLeft: old goes left (-1.0)
+                                                    } else {
+                                                        progress // SlideRight: old goes right (+1.0)
+                                                    };
+                                                    this.left(relative(offset))
+                                                },
+                                            ),
+                                    )
+                                })
+                                // New content (enters from right for SlideLeft, from left for SlideRight)
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .w_full()
+                                        .h_full()
+                                        .child(new_content)
+                                        .left(relative(if is_left { 1.0 } else { -1.0 })) // Starts off-screen
+                                        .with_animation(
+                                            animation_id.clone(),
+                                            Animation::new(Duration::from_millis(duration_ms)),
+                                            move |this, delta| {
+                                                let progress = delta.clamp(0.0, 1.0);
+                                                // New content enters
+                                                let start = if is_left { 1.0 } else { -1.0 };
+                                                let offset = start * (1.0 - progress);
+                                                this.left(relative(offset))
+                                            },
+                                        ),
+                                )
+                                .into_any_element()
+                        }
+                        SlideDirection::Up | SlideDirection::Down => {
+                            // Vertical slide: use absolute positioning for proper stacked layout
+                            let is_up = matches!(direction, SlideDirection::Up);
+
+                            div()
+                                .relative()
+                                .w_full()
+                                .h_full()
+                                .overflow_hidden()
+                                // Old content (exits up for SlideUp, or down for SlideDown)
+                                .when_some(old_content, |container, old| {
+                                    container.child(
+                                        div()
+                                            .absolute()
+                                            .w_full()
+                                            .h_full()
+                                            .child(old)
+                                            .top(relative(0.0)) // Starts at normal position
+                                            .with_animation(
+                                                animation_id.clone(),
+                                                Animation::new(Duration::from_millis(duration_ms)),
+                                                move |this, delta| {
+                                                    let progress = delta.clamp(0.0, 1.0);
+                                                    // Old content exits
+                                                    let offset = if is_up {
+                                                        -progress // SlideUp: old goes up (-1.0)
+                                                    } else {
+                                                        progress // SlideDown: old goes down (+1.0)
+                                                    };
+                                                    this.top(relative(offset))
+                                                },
+                                            ),
+                                    )
+                                })
+                                // New content (enters from bottom for SlideUp, from top for SlideDown)
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .w_full()
+                                        .h_full()
+                                        .child(new_content)
+                                        .top(relative(if is_up { 1.0 } else { -1.0 })) // Starts off-screen
+                                        .with_animation(
+                                            animation_id.clone(),
+                                            Animation::new(Duration::from_millis(duration_ms)),
+                                            move |this, delta| {
+                                                let progress = delta.clamp(0.0, 1.0);
+                                                // New content enters
+                                                let start = if is_up { 1.0 } else { -1.0 };
+                                                let offset = start * (1.0 - progress);
+                                                this.top(relative(offset))
+                                            },
+                                        ),
+                                )
+                                .into_any_element()
+                        }
+                    }
+                }
+                Transition::Fade { .. } => {
+                    // Build OLD content (no animation wrapper, just the content)
+                    let old_content = previous_route.map(|prev| {
+                        if let Some(builder) = prev.builder.as_ref() {
+                            builder(cx, &prev.params)
+                        } else {
+                            div().child("No route matched").into_any_element()
+                        }
+                    });
+
+                    // Build NEW content (no animation wrapper, just the content)
+                    let new_content = if let Some(builder) = builder_opt.as_ref() {
+                        builder(cx, &route_params)
+                    } else {
+                        div().child("No route matched").into_any_element()
+                    };
+
                     div()
-                        .absolute()
+                        .relative()
                         .w_full()
                         .h_full()
-                        .children(previous_route.map(|prev| {
-                            // Old content with EXIT animation using NEW route's transition
-                            let exit_animation_id = SharedString::from(format!(
-                                "outlet_exit_{:?}_{}",
-                                self.name, prev.animation_counter
-                            ));
-                            build_exit_animated_content(
-                                cx,
-                                window,
-                                prev.builder.as_ref(),
-                                &prev.params,
-                                exit_animation_id,
-                                &route_transition, // Use NEW route's transition, not old
-                                duration_ms,
+                        .overflow_hidden()
+                        // Old content (fades out)
+                        .when_some(old_content, |container, old| {
+                            container.child(
+                                div()
+                                    .absolute()
+                                    .w_full()
+                                    .h_full()
+                                    .child(old)
+                                    .with_animation(
+                                        SharedString::from(format!(
+                                            "outlet_fade_exit_{:?}_{}",
+                                            self.name, animation_counter
+                                        )),
+                                        Animation::new(Duration::from_millis(duration_ms)),
+                                        |this, delta| {
+                                            let progress = delta.clamp(0.0, 1.0);
+                                            this.opacity(1.0 - progress)
+                                        },
+                                    ),
                             )
-                        }))
-                        .child({
-                            // New content with ENTER animation
-                            let enter_animation_id = SharedString::from(format!(
-                                "outlet_enter_{:?}_{}",
-                                self.name, animation_counter
-                            ));
-                            build_enter_animated_content(
-                                cx,
-                                window,
-                                builder_opt.as_ref(),
-                                &route_params,
-                                enter_animation_id,
-                                &route_transition,
-                                duration_ms,
-                            )
-                        }),
-                )
-                .into_any_element()
+                        })
+                        // New content (fades in)
+                        .child(
+                            div()
+                                .absolute()
+                                .w_full()
+                                .h_full()
+                                .child(new_content)
+                                .opacity(0.0)
+                                .with_animation(
+                                    SharedString::from(format!(
+                                        "outlet_fade_enter_{:?}_{}",
+                                        self.name, animation_counter
+                                    )),
+                                    Animation::new(Duration::from_millis(duration_ms)),
+                                    |this, delta| {
+                                        let progress = delta.clamp(0.0, 1.0);
+                                        this.opacity(progress)
+                                    },
+                                ),
+                        )
+                        .into_any_element()
+                }
+                _ => {
+                    // No transition or unsupported - just show new content
+                    let new_content = if let Some(builder) = builder_opt.as_ref() {
+                        builder(cx, &route_params)
+                    } else {
+                        div().child("No route matched").into_any_element()
+                    };
+
+                    div()
+                        .relative()
+                        .w_full()
+                        .h_full()
+                        .child(new_content)
+                        .into_any_element()
+                }
+            }
         }
 
         #[cfg(not(feature = "transition"))]
