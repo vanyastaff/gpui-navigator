@@ -760,7 +760,7 @@ impl Render for RouterOutlet {
                         .w_full()
                         .h_full()
                         .children(previous_route.map(|prev| {
-                            // Old content with EXIT animation
+                            // Old content with EXIT animation using NEW route's transition
                             let exit_animation_id = SharedString::from(format!(
                                 "outlet_exit_{:?}_{}",
                                 self.name, prev.animation_counter
@@ -771,7 +771,7 @@ impl Render for RouterOutlet {
                                 prev.builder.as_ref(),
                                 &prev.params,
                                 exit_animation_id,
-                                &prev.transition,
+                                &route_transition, // Use NEW route's transition, not old
                                 duration_ms,
                             )
                         }))
