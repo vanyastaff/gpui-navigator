@@ -11,7 +11,7 @@ homepage = "https://github.com/vanyastaff/gpui-navigator"
 repository = "https://github.com/vanyastaff/gpui-navigator"
 keywords = ["gpui", "navigator", "navigation", "transitions", "ui"]
 categories = ["gui", "development-tools"]
-authors = ["gpui-navigator contributors"]
+authors = ["Vanya Stafford"]
 exclude = [
     ".github/",
     ".idea/",
