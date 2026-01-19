@@ -45,9 +45,9 @@ use std::future::Future;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use gpui_router::{RouteMiddleware, NavigationRequest};
-/// use futures::Future;
+/// use std::future::Future;
 /// use std::pin::Pin;
 ///
 /// struct AnalyticsMiddleware;
