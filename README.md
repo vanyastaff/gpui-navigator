@@ -3,37 +3,30 @@
 [![Crates.io](https://img.shields.io/crates/v/gpui-navigator.svg)](https://crates.io/crates/gpui-navigator)
 [![Documentation](https://docs.rs/gpui-navigator/badge.svg)](https://docs.rs/gpui-navigator)
 [![License](https://img.shields.io/crates/l/gpui-navigator.svg)](LICENSE-MIT)
-[![CI](https://github.com/vanyastaff/gpui-navigator/workflows/CI/badge.svg)](https://github.com/vanyastaff/gpui-navigator/actions)
 
-A declarative navigation library for [GPUI](https://gpui.rs) with support for nested routes, transitions, guards, and middleware.
+A declarative navigation library for [GPUI](https://gpui.rs) with smooth transitions, nested routing, and beautiful default error pages.
 
 ## Features
 
-- 🎯 **Declarative Route Definition** - Define routes with a fluent builder API
-- 🎨 **Route Transitions** - Built-in fade, slide, and scale animations with dual enter/exit support
-- 🔀 **Nested Routing** - Support for parent/child route hierarchies with `RouterOutlet`
-- 🛡️ **Route Guards** - Authentication, authorization, and custom guards
-- 🔌 **Middleware** - Before/after hooks for navigation events
-- 📝 **Named Routes** - Navigate using route names instead of paths
-- 🔍 **Route Matching** - Pattern matching with parameters and constraints
-- 📊 **Performance** - Route cache for optimized lookups
-- ⚡ **Error Handling** - Beautiful default error pages with customization support
-- 🎨 **RouterLink Widget** - Instant navigation with active state styling
-- 🖼️ **Default Pages** - Pre-styled 404, loading, and error pages out of the box
+- 🎨 **Smooth Transitions** - Fade, slide animations with dual enter/exit support
+- 🔀 **Nested Routing** - Parent/child route hierarchies with `RouterOutlet`
+- 🎯 **Simple API** - Intuitive route definition with closures
+- 🖼️ **Beautiful Defaults** - Pre-styled 404 and error pages out of the box
+- 🔗 **RouterLink Widget** - Navigation links with active state styling
+- 🛡️ **Route Guards** - Authentication and authorization (optional)
+- 🔌 **Middleware** - Before/after navigation hooks (optional)
+- 📝 **Named Routes** - Navigate by name instead of path
 
 ## Why GPUI Navigator?
 
-Unlike other GPUI routers, Navigator focuses on:
+Unlike other GPUI routers:
 
-- **Smooth Animations**: Dual-animation transitions (separate enter/exit animations)
-- **Developer Experience**: Flutter-inspired API with intuitive navigation
-- **Production Ready**: Built-in error pages, guards, and middleware
-- **Type Safety**: Strongly typed route parameters and navigation
-- **Performance**: Efficient caching and minimal re-renders
+- **Zero Boilerplate** - Define routes with simple closures, no complex builders
+- **Smooth Animations** - Dual-animation system for professional transitions
+- **Production Ready** - Beautiful error pages included, not placeholder text
+- **Developer Experience** - Clean API inspired by modern web frameworks
 
 ## Installation
-
-Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -44,61 +37,73 @@ gpui = "0.2"
 ## Quick Start
 
 ```rust
+use gpui::prelude::*;
 use gpui::*;
-use gpui-navigator::*;
+use gpui_navigator::*;
 
 fn main() {
-    Application::new().run(|cx| {
-        // Initialize router with routes
+    Application::new().run(|cx: &mut App| {
+        // Initialize router
         init_router(cx, |router| {
+            // Define routes with closures
             router.add_route(
-                Route::new("/", home_page)
+                Route::new("/", |_, _| home_page().into_any_element())
                     .transition(Transition::fade(300))
             );
             
             router.add_route(
-                Route::new("/about", about_page)
+                Route::new("/about", |_, _| about_page().into_any_element())
                     .transition(Transition::slide_left(400))
             );
         });
 
-        // Open window
+        // Open window with RouterOutlet
         cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|_| AppView)
-        })
+            cx.new(|cx| AppView::new(cx))
+        }).unwrap();
     });
 }
 
-fn home_page(_cx: &mut App, _params: &RouteParams) -> AnyElement {
-    div().child("Home Page").into_any_element()
+fn home_page() -> impl IntoElement {
+    div().child("Home Page")
 }
 
-fn about_page(_cx: &mut App, _params: &RouteParams) -> AnyElement {
-    div().child("About Page").into_any_element()
+fn about_page() -> impl IntoElement {
+    div().child("About Page")
 }
 
-struct AppView;
+struct AppView {
+    outlet: Entity<RouterOutlet>,
+}
+
+impl AppView {
+    fn new(cx: &mut Context<'_, Self>) -> Self {
+        Self {
+            outlet: cx.new(|_| RouterOutlet::new()),
+        }
+    }
+}
 
 impl Render for AppView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .size_full()
-            .child(RouterOutlet::new())
+            .child(self.outlet.clone())
     }
 }
 ```
 
 ## Navigation
 
-The library provides a Flutter-style navigation API:
+### Programmatic Navigation
 
 ```rust
-use gpui-navigator::Navigator;
+use gpui_navigator::Navigator;
 
 // Push new route
-Navigator::push(cx, "/profile");
+Navigator::push(cx, "/about");
 
 // Replace current route
 Navigator::replace(cx, "/login");
@@ -106,364 +111,287 @@ Navigator::replace(cx, "/login");
 // Go back
 Navigator::pop(cx);
 
-// Go forward
+// Go forward  
 Navigator::forward(cx);
 
 // Get current path
 let path = Navigator::current_path(cx);
 
-// Check navigation state
+// Check if can go back
 if Navigator::can_pop(cx) {
     Navigator::pop(cx);
 }
 ```
 
-### Flutter-style API
+### RouterLink Widget
+
+Create clickable navigation links with automatic active state:
 
 ```rust
-// Navigator.of(context) style
-Navigator::of(cx).push("/users").pop();
+use gpui_navigator::*;
 
-// Or direct static methods
-Navigator::push(cx, "/users/123");
+fn navbar(cx: &mut Context<'_, AppView>) -> impl IntoElement {
+    div()
+        .flex()
+        .gap_4()
+        // Basic link
+        .child(
+            RouterLink::new("/".to_string())
+                .child(div().child("Home"))
+                .build(cx)
+        )
+        // Link with active styling
+        .child(
+            RouterLink::new("/about".to_string())
+                .child(div().px_4().py_2().child("About"))
+                .active_class(|div| {
+                    div.bg(rgb(0x2196f3))
+                       .text_color(white())
+                })
+                .build(cx)
+        )
+}
 ```
+
+**RouterLink features:**
+- ✅ Instant navigation with immediate UI updates
+- ✅ Automatic active state detection
+- ✅ Customizable active styling
+- ✅ Works with nested routes
 
 ## Route Transitions
 
-The router supports smooth transitions between routes:
+Add smooth animations between pages:
 
 ```rust
-use gpui-navigator::*;
+use gpui_navigator::*;
 
 // Fade transition
-Route::new("/fade", page).transition(Transition::fade(300))
+Route::new("/fade", |_, _| page().into_any_element())
+    .transition(Transition::fade(300))
 
 // Slide transitions
-Route::new("/left", page).transition(Transition::slide_left(400))
-Route::new("/right", page).transition(Transition::slide_right(400))
-Route::new("/up", page).transition(Transition::slide_up(400))
-Route::new("/down", page).transition(Transition::slide_down(400))
+Route::new("/slide-left", |_, _| page().into_any_element())
+    .transition(Transition::slide_left(400))
 
-// Scale transitions
-Route::new("/zoom-in", page).transition(Transition::zoom_in(350))
-Route::new("/zoom-out", page).transition(Transition::zoom_out(350))
-Route::new("/custom", page).transition(Transition::scale(0.8, 1.2, 400))
+Route::new("/slide-right", |_, _| page().into_any_element())
+    .transition(Transition::slide_right(400))
+
+Route::new("/slide-up", |_, _| page().into_any_element())
+    .transition(Transition::slide_up(400))
+
+Route::new("/slide-down", |_, _| page().into_any_element())
+    .transition(Transition::slide_down(400))
 
 // No transition
-Route::new("/instant", page).transition(Transition::None)
+Route::new("/instant", |_, _| page().into_any_element())
+    .transition(Transition::None)
+```
+
+**Dual Animation System:**
+GPUI Navigator uses the new route's transition for both exit and enter animations, creating smooth, professional transitions.
+
+## Route Parameters
+
+Extract dynamic values from URLs:
+
+```rust
+use gpui_navigator::*;
+
+// Define route with parameter
+router.add_route(
+    Route::new("/users/:id", |_, params| {
+        user_page(params).into_any_element()
+    })
+);
+
+fn user_page(params: &RouteParams) -> impl IntoElement {
+    let user_id = params.get("id").unwrap_or(&"unknown".to_string());
+    div().child(format!("User: {}", user_id))
+}
+
+// Navigate with parameter
+Navigator::push(cx, "/users/123");
 ```
 
 ## Nested Routes
 
-Create hierarchical route structures with `RouterOutlet`:
+Create layouts with child routes:
 
 ```rust
-use gpui-navigator::*;
+use gpui_navigator::*;
 
-fn dashboard_layout(_cx: &mut App, _params: &RouteParams) -> AnyElement {
+router.add_route(
+    Route::new("/dashboard", |_, _| dashboard_layout().into_any_element())
+        .children(vec![
+            Route::new("overview", |_, _| overview_page().into_any_element()).into(),
+            Route::new("settings", |_, _| settings_page().into_any_element()).into(),
+        ])
+);
+
+fn dashboard_layout() -> impl IntoElement {
     div()
         .flex()
+        .flex_col()
         .child("Dashboard Header")
         .child(RouterOutlet::new())  // Child routes render here
-        .into_any_element()
-}
-
-// Configure nested routes
-init_router(cx, |router| {
-    router.add_route(
-        Route::new("/dashboard", dashboard_layout)
-            .children(vec![
-                Route::new("overview", overview_page),
-                Route::new("settings", settings_page),
-                Route::new("analytics", analytics_page),
-            ])
-    );
-});
-```
-
-## Route Parameters
-
-Extract parameters from route paths:
-
-```rust
-use gpui-navigator::*;
-
-// Define route with parameter
-Route::new("/users/:id", user_profile)
-
-// Access parameters in handler
-fn user_profile(_cx: &mut App, params: &RouteParams) -> AnyElement {
-    let user_id = params.get("id").unwrap_or(&"unknown".to_string());
-    div()
-        .child(format!("User Profile: {}", user_id))
-        .into_any_element()
-}
-
-// Navigate with parameters
-Navigator::push(cx, "/users/123");
-
-// Type-safe parameter extraction
-let id: Option<u32> = params.get_as("id");
-```
-
-## Route Guards
-
-Protect routes with authentication and authorization:
-
-```rust
-use gpui-navigator::*;
-
-// Authentication guard with custom check function
-fn is_authenticated(cx: &App) -> bool {
-    cx.try_global::<AuthState>()
-        .map(|state| state.is_logged_in())
-        .unwrap_or(false)
-}
-
-Route::new("/profile", profile_page)
-    .guard(AuthGuard::new(is_authenticated, "/login"))
-
-// Role-based guard
-fn get_user_role(cx: &App) -> Option<String> {
-    cx.try_global::<CurrentUser>()
-        .map(|user| user.role.clone())
-}
-
-Route::new("/admin", admin_page)
-    .guard(RoleGuard::new(get_user_role, "admin", Some("/forbidden")))
-
-// Permission-based guard
-fn has_permission(cx: &App, permission: &str) -> bool {
-    cx.try_global::<UserPermissions>()
-        .map(|perms| perms.contains(permission))
-        .unwrap_or(false)
-}
-
-Route::new("/users/:id/delete", delete_user)
-    .guard(PermissionGuard::new(has_permission, "users.delete"))
-
-// Custom guard with closure
-Route::new("/premium", premium_page)
-    .guard(guard_fn(|cx, _request| async move {
-        if is_premium_user(cx) {
-            GuardResult::allow()
-        } else {
-            GuardResult::redirect("/upgrade")
-        }
-    }))
-```
-
-## Middleware
-
-Add before/after hooks to routes:
-
-```rust
-use gpui-navigator::*;
-
-// Create middleware from functions
-struct LoggingMiddleware;
-
-impl RouteMiddleware for LoggingMiddleware {
-    type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
-
-    fn before_navigation(&self, _cx: &App, request: &NavigationRequest) -> Self::Future {
-        log::info!("Navigating to: {}", request.to);
-        Box::pin(async {})
-    }
-
-    fn after_navigation(&self, _cx: &App, request: &NavigationRequest) -> Self::Future {
-        log::info!("Navigated to: {}", request.to);
-        Box::pin(async {})
-    }
-}
-
-Route::new("/", home_page)
-    .middleware(LoggingMiddleware)
-```
-
-## Named Routes
-
-Navigate using route names:
-
-```rust
-use gpui-navigator::*;
-
-// Define named route
-Route::new("/profile/:id", profile_page)
-    .name("user-profile")
-
-// Navigate by name
-let mut params = RouteParams::new();
-params.set("id".to_string(), "123".to_string());
-Navigator::push_named(cx, "user-profile", &params);
-
-// Generate URL from name
-if let Some(url) = Navigator::url_for(cx, "user-profile", &params) {
-    // url = "/profile/123"
 }
 ```
+
+Access nested routes:
+- `/dashboard` - Shows dashboard layout
+- `/dashboard/overview` - Shows overview inside layout
+- `/dashboard/settings` - Shows settings inside layout
 
 ## Error Handling
 
 ### Default Error Pages
 
-GPUI Navigator provides beautiful, pre-styled error pages out of the box:
+GPUI Navigator includes beautiful, pre-styled error pages:
 
-```rust
-use gpui-navigator::*;
+- **404 Page** - Shown when no route matches (styled with red badge)
+- **Loading Page** - Optional loading state
+- **Error Page** - Generic error display
 
-// Use built-in default pages (404, loading, error)
-// These are automatically shown when routes don't match or errors occur
-// No configuration needed!
-```
+These work automatically - no configuration needed!
 
 ### Custom Error Pages
 
-Override default pages with your own:
+Override defaults if desired:
 
 ```rust
-use gpui-navigator::*;
-
-init_router(cx, |router| {
-    router
-        .error_handlers(ErrorHandlers::new()
-            .on_not_found(|path, _cx| {
-                div()
-                    .child("Custom 404")
-                    .child(format!("Page '{}' not found", path))
-                    .into_any_element()
-            })
-            .on_error(|error, _cx| {
-                div()
-                    .child("Custom Error")
-                    .child(format!("Error: {}", error))
-                    .into_any_element()
-            })
-        );
-});
-```
-
-### Default Pages Configuration
-
-Customize the default pages system:
-
-```rust
-use gpui-navigator::*;
+use gpui_navigator::*;
 
 let default_pages = DefaultPages::new()
     .with_not_found(|| {
-        div().child("My Custom 404 Page").into_any_element()
-    })
-    .with_loading(|| {
-        div().child("Loading...").into_any_element()
-    })
-    .with_error(|message| {
-        div().child(format!("Error: {}", message)).into_any_element()
+        div()
+            .child("Custom 404")
+            .child("Page not found")
+            .into_any_element()
     });
-
-// Use in your error handlers
-router.error_handlers(ErrorHandlers::new()
-    .on_not_found(|_path, _cx| default_pages.render_not_found())
-);
 ```
 
-## RouterLink Widget
+## Named Routes
 
-Create navigation links with active state styling:
+Navigate by name instead of hardcoded paths:
 
 ```rust
-use gpui-navigator::*;
+// Define named route
+router.add_route(
+    Route::new("/users/:id", |_, params| user_page(params).into_any_element())
+        .name("user-profile")
+);
 
-// Basic link
-RouterLink::new("/about".to_string())
-    .child(div().child("About"))
-    .build(cx)
-
-// Link with active state styling
-RouterLink::new("/dashboard".to_string())
-    .child(div().px_4().py_2().child("Dashboard"))
-    .active_class(|div| {
-        div.bg(rgb(0x2196f3))
-           .text_color(white())
-    })
-    .build(cx)
-
-// Helper function for simpler usage
-router_link(cx, "/profile", "My Profile")
+// Navigate by name
+let mut params = RouteParams::new();
+params.set("id".to_string(), "123".to_string());
+Navigator::push_named(cx, "user-profile", &params);
 ```
 
-The RouterLink widget:
-- ✅ Automatically highlights when the route is active
-- ✅ Instant navigation with `cx.notify()` for immediate UI updates
-- ✅ Supports custom active state styling
-- ✅ Works with nested routes
+## Optional Features
+
+Enable advanced features in `Cargo.toml`:
+
+```toml
+[dependencies]
+gpui-navigator = { version = "0.1", features = ["guard", "middleware", "cache"] }
+```
+
+### Route Guards
+
+Protect routes with authentication:
+
+```rust
+#[cfg(feature = "guard")]
+use gpui_navigator::*;
+
+fn is_logged_in(cx: &App) -> bool {
+    // Check auth state
+    true
+}
+
+Route::new("/profile", |_, _| profile_page().into_any_element())
+    .guard(AuthGuard::new(is_logged_in, "/login"))
+```
+
+### Middleware
+
+Add hooks before/after navigation:
+
+```rust
+#[cfg(feature = "middleware")]
+use gpui_navigator::*;
+
+struct LoggingMiddleware;
+
+impl RouteMiddleware for LoggingMiddleware {
+    // Implement before_navigation and after_navigation
+}
+
+Route::new("/", |_, _| home().into_any_element())
+    .middleware(LoggingMiddleware)
+```
 
 ## Examples
 
-Run the transition demo:
+Run the included examples:
 
 ```bash
+# Transition animations demo
 cargo run --example transition_demo
+
+# RouterLink and error handling demo
+cargo run --example error_demo
 ```
+
+## API Summary
+
+| Function/Type | Description |
+|--------------|-------------|
+| `init_router(cx, \|router\| {...})` | Initialize the router with routes |
+| `Route::new(path, handler)` | Create a new route |
+| `.transition(Transition::fade(ms))` | Add transition animation |
+| `.name("route-name")` | Name the route for reference |
+| `.children(vec![...])` | Add child routes |
+| `Navigator::push(cx, path)` | Navigate to path |
+| `Navigator::pop(cx)` | Go back |
+| `RouterOutlet::new()` | Render current/child routes |
+| `RouterLink::new(path)` | Create navigation link |
+| `RouteParams::get("key")` | Get route parameter |
 
 ## Architecture
 
-### Module Structure
+GPUI Navigator is built with a clean, modular architecture:
 
-| Module | Description |
-|--------|-------------|
-| `context` | Global router state and Navigator API |
-| `route` | Route definition and configuration |
-| `router` | Router state management |
-| `transition` | Animation definitions |
-| `guards` | Authentication/authorization guards |
-| `middleware` | Navigation middleware |
-| `lifecycle` | Route lifecycle hooks |
-| `nested` | Nested routing and RouterOutlet |
-| `params` | Route and query parameters |
-| `error` | Error handling |
-| `widgets` | UI components (RouterLink, RouterOutlet) |
+- **Core**: Route matching, state management, navigation
+- **Widgets**: RouterOutlet (route renderer), RouterLink (nav links)
+- **Optional**: Guards, middleware, caching (feature-gated)
+- **Defaults**: Beautiful error pages included
 
-### Route Matching
+## Minimum Supported Rust Version
 
-Routes are matched using patterns with support for:
-
-- Static segments: `/about`
-- Dynamic parameters: `/users/:id`
-- Wildcards: `/docs/*path`
-- Constraints: `/users/:id<\d+>` (numeric only)
-
-### Performance
-
-- Route cache for O(1) lookups after first match
-- Efficient parent route resolution
-- Minimal allocations during navigation
-- Cache statistics for monitoring
-
-## Minimum Supported Rust Version (MSRV)
-
-This crate requires Rust 1.75 or later.
+Rust 1.75 or later.
 
 ## License
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions welcome! Please:
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create your feature branch
+3. Add tests for new features
+4. Ensure all tests pass: `cargo test`
+5. Submit a Pull Request
 
 ## Acknowledgments
 
-- Inspired by [Flutter Navigator](https://api.flutter.dev/flutter/widgets/Navigator-class.html)
 - Built for [GPUI](https://gpui.rs) by Zed Industries
+- Inspired by modern web routing libraries
