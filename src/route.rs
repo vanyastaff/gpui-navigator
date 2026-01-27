@@ -9,7 +9,7 @@ use crate::params::RouteParams;
 #[cfg(feature = "transition")]
 use crate::transition::TransitionConfig;
 use crate::RouteMatch;
-use gpui::{AnyElement, App, IntoElement, Window};
+use gpui::{AnyElement, App, IntoElement, Render, Window};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -335,6 +335,135 @@ impl Route {
             #[cfg(feature = "transition")]
             transition: TransitionConfig::default(),
         }
+    }
+
+    /// Create a stateless route from a simple view function
+    ///
+    /// Use this for simple, stateless pages that don't need access to route params,
+    /// window, or context. The view function is called on every render.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use gpui_navigator::Route;
+    /// use gpui::*;
+    ///
+    /// Route::view("/about", || {
+    ///     div().child("About Page").into_any_element()
+    /// });
+    /// ```
+    pub fn view<F>(path: impl Into<String>, view: F) -> Self
+    where
+        F: Fn() -> AnyElement + Send + Sync + 'static,
+    {
+        Self::new(path, move |_, _, _| view())
+    }
+
+    /// Create a stateful route with an Entity-based component
+    ///
+    /// Use this for pages that maintain internal state across navigation.
+    /// The component is cached using `window.use_keyed_state()`, so navigating
+    /// back to the route will preserve the component's state.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use gpui_navigator::Route;
+    /// use gpui::*;
+    ///
+    /// struct CounterPage {
+    ///     count: i32,
+    /// }
+    ///
+    /// impl CounterPage {
+    ///     fn new() -> Self {
+    ///         Self { count: 0 }
+    ///     }
+    /// }
+    ///
+    /// impl Render for CounterPage {
+    ///     fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    ///         div().child(format!("Count: {}", self.count))
+    ///     }
+    /// }
+    ///
+    /// Route::component("/counter", CounterPage::new);
+    /// ```
+    pub fn component<T, F>(path: impl Into<String>, create: F) -> Self
+    where
+        T: Render + 'static,
+        F: Fn() -> T + Send + Sync + 'static + Clone,
+    {
+        let path_str = path.into();
+        let key_path = path_str.clone();
+
+        Self::new(path_str, move |window, cx, _| {
+            let key = format!("route:{}", key_path);
+            let create_fn = create.clone();
+            let entity =
+                window.use_keyed_state(gpui::ElementId::Name(key.into()), cx, |_, _| create_fn());
+            entity.clone().into_any_element()
+        })
+    }
+
+    /// Create a stateful route with parameters
+    ///
+    /// Like `component()`, but the create function receives route parameters.
+    /// The component is cached per unique set of parameter values, so navigating
+    /// to `/user/1` and `/user/2` will create two separate component instances.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use gpui_navigator::{Route, RouteParams};
+    /// use gpui::*;
+    ///
+    /// struct UserPage {
+    ///     user_id: String,
+    /// }
+    ///
+    /// impl UserPage {
+    ///     fn new(user_id: String) -> Self {
+    ///         Self { user_id }
+    ///     }
+    /// }
+    ///
+    /// impl Render for UserPage {
+    ///     fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    ///         div().child(format!("User: {}", self.user_id))
+    ///     }
+    /// }
+    ///
+    /// Route::component_with_params("/user/:id", |params| {
+    ///     let id = params.get("id").unwrap().to_string();
+    ///     UserPage::new(id)
+    /// });
+    /// ```
+    pub fn component_with_params<T, F>(path: impl Into<String>, create: F) -> Self
+    where
+        T: Render + 'static,
+        F: Fn(&RouteParams) -> T + Send + Sync + 'static + Clone,
+    {
+        let path_str = path.into();
+        let key_path = path_str.clone();
+
+        Self::new(path_str, move |window, cx, params| {
+            // Create unique key from path + parameter values
+            let params_key = params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("&");
+            let key = format!("route:{}?{}", key_path, params_key);
+
+            let params_clone = params.clone();
+            let create_fn = create.clone();
+            let entity =
+                window.use_keyed_state(gpui::ElementId::Name(key.into()), cx, move |_, _| {
+                    create_fn(&params_clone)
+                });
+            entity.clone().into_any_element()
+        })
     }
 
     /// Add child routes to this route

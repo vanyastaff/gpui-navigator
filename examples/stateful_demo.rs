@@ -1,43 +1,32 @@
 //! Stateful Route Demo
 //!
-//! Demonstrates how to create stateful page components using structs with Render trait.
-//! This is the CORRECT way to build pages in GPUI - using Entity instead of functions.
+//! Demonstrates how to create stateful page components using Route::component().
+//! This is the CORRECT way to build pages in GPUI - using Entity-based components
+//! that maintain state across navigation.
 
 use gpui::*;
 use gpui_navigator::*;
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        // Initialize router with routes that create Entity-based page components
+        // Initialize router with routes using the new ergonomic API
         init_router(cx, |router| {
             router.add_route(
-                Route::new("/", |window, cx, _params| {
-                    // ✅ Create Entity from struct that implements Render
-                    let home = window.use_state(cx, |_window, cx| HomePage::new(cx));
-                    home.clone().into_any_element()
-                })
-                .name("home")
-                .transition(Transition::None),
+                Route::component("/", HomePage::new)
+                    .name("home")
+                    .transition(Transition::None),
             );
 
             router.add_route(
-                Route::new("/counter", |window, cx, _params| {
-                    // ✅ Entity-based page with internal state
-                    let counter = window.use_state(cx, |_window, cx| CounterPage::new(cx));
-                    counter.clone().into_any_element()
-                })
-                .name("counter")
-                .transition(Transition::fade(300)),
+                Route::component("/counter", CounterPage::new)
+                    .name("counter")
+                    .transition(Transition::fade(300)),
             );
 
             router.add_route(
-                Route::new("/form", |window, cx, _params| {
-                    // ✅ Entity-based form page
-                    let form = window.use_state(cx, |_window, cx| FormPage::new(cx));
-                    form.clone().into_any_element()
-                })
-                .name("form")
-                .transition(Transition::slide_left(400)),
+                Route::component("/form", FormPage::new)
+                    .name("form")
+                    .transition(Transition::slide_left(400)),
             );
         });
 
@@ -130,7 +119,7 @@ impl StatefulDemoApp {
 struct HomePage;
 
 impl HomePage {
-    fn new(_cx: &mut Context<'_, Self>) -> Self {
+    fn new() -> Self {
         Self
     }
 }
@@ -149,9 +138,9 @@ impl Render for HomePage {
                     .flex_col()
                     .gap_2()
                     .child("This demo shows the CORRECT way to build pages in GPUI:")
+                    .child("✅ Use Route::component() for stateful pages")
                     .child("✅ Pages are structs that implement Render trait")
-                    .child("✅ Route builders use window.use_state() to create/cache Entity")
-                    .child("✅ Entity is reused when navigating back to the same route")
+                    .child("✅ Entity is automatically cached and reused on navigation")
                     .child("")
                     .child("Navigate to see stateful examples:")
                     .child("• Counter - Entity with internal state")
@@ -164,19 +153,20 @@ impl Render for HomePage {
                     .bg(rgb(0x2d2d2d))
                     .rounded_md()
                     .text_sm()
-                    .child("💡 Key Benefit: Window Parameter in RouteBuilder")
+                    .child("💡 New Ergonomic API")
                     .child(
                         div()
                             .mt_2()
-                            .child("Old signature: Fn(&mut App, &RouteParams) -> AnyElement"),
+                            .child("Route::view() - for stateless pages (functions)"),
                     )
-                    .child(div().child(
-                        "New signature: Fn(&mut Window, &mut App, &RouteParams) -> AnyElement",
-                    ))
+                    .child(div().child("Route::component() - for stateful pages (Entity + Render)"))
+                    .child(
+                        div().child("Route::component_with_params() - for pages with route params"),
+                    )
                     .child(
                         div()
                             .mt_2()
-                            .child("Now builders can use window.use_state() to cache page Entity!"),
+                            .child("Route::component() uses window.use_keyed_state() internally!"),
                     ),
             )
     }
@@ -191,7 +181,7 @@ struct CounterPage {
 }
 
 impl CounterPage {
-    fn new(_cx: &mut Context<'_, Self>) -> Self {
+    fn new() -> Self {
         Self { count: 0 }
     }
 }
@@ -238,7 +228,7 @@ impl Render for CounterPage {
                             .child("Try: increment counter, go to Form, return to Counter"),
                     )
                     .child(div().child(
-                        "The count is preserved because the Entity is cached by use_state()",
+                        "The count is preserved because Route::component() caches the Entity!",
                     )),
             )
     }
@@ -280,7 +270,7 @@ struct FormPage {
 }
 
 impl FormPage {
-    fn new(_cx: &mut Context<'_, Self>) -> Self {
+    fn new() -> Self {
         Self {
             name: String::from("John Doe"),
             email: String::from("john@example.com"),
