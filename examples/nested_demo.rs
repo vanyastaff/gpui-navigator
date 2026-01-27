@@ -23,6 +23,8 @@ fn main() {
                     .name("dashboard")
                     .transition(Transition::slide_left(300))
                     .children(vec![
+                        // Default child - empty path redirects to overview
+                        Route::component("", OverviewPage::new).into(),
                         Route::component("overview", OverviewPage::new)
                             .name("dashboard.overview")
                             .into(),
@@ -43,6 +45,8 @@ fn main() {
                     .name("products")
                     .transition(Transition::slide_left(300))
                     .children(vec![
+                        // Default child - empty path shows list
+                        Route::component("", ProductListPage::new).into(),
                         Route::component("list", ProductListPage::new)
                             .name("products.list")
                             .into(),
