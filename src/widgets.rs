@@ -132,6 +132,54 @@ impl Render for RouterOutlet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         trace_log!("🔄 RouterOutlet::render() called");
 
+        // Get current router and resolve child route (must be in scope to avoid borrow issues)
+        let (current_path, child_route, child_params) = {
+            let router = cx.try_global::<crate::context::GlobalRouter>();
+
+            let Some(router) = router else {
+                // No router - render nothing (like React Router)
+                // In development, log warning to help developers debug
+                trace_log!("⚠️ RouterOutlet: No global router found");
+                return div().into_any_element();
+            };
+
+            let current_path = router.current_path().to_string();
+
+            // Find parent route that has children
+            let parent_route = find_parent_route_for_path(router.state().routes(), &current_path);
+
+            let Some(parent_route) = parent_route else {
+                // No parent with children - render nothing (like React Router)
+                // This happens when RouterOutlet is used in a route without children
+                trace_log!(
+                    "⚠️ RouterOutlet: No parent route with children found for path '{}'",
+                    current_path
+                );
+                return div().into_any_element();
+            };
+
+            // Resolve which CHILD route should be rendered
+            let route_params = crate::RouteParams::new();
+            let resolved = resolve_child_route(
+                parent_route,
+                &current_path,
+                &route_params,
+                self.name.as_deref(),
+            );
+
+            let Some((child_route, child_params)) = resolved else {
+                // No matching child - render nothing (like React Router)
+                // This typically means the route configuration doesn't match the current path
+                trace_log!(
+                    "⚠️ RouterOutlet: No child route matched for path '{}'",
+                    current_path
+                );
+                return div().into_any_element();
+            };
+
+            (current_path, child_route, child_params)
+        };
+
         // Use keyed state to persist animation counter and content across renders
         let state_key = SharedString::from(format!("outlet_{:?}", self.name));
         let state = window.use_keyed_state(state_key.clone(), cx, |_, _| OutletState::default());
@@ -141,68 +189,21 @@ impl Render for RouterOutlet {
             (guard.current_path.clone(), guard.animation_counter)
         };
 
-        // Get current router info
+        // Get child route info for rendering
         #[cfg(feature = "transition")]
-        let (router_path, route_params, route_transition, builder_opt) = cx
-            .try_global::<crate::context::GlobalRouter>()
-            .map(|router| {
-                let path = router.current_path().to_string();
-
-                let params = router
-                    .current_match_immutable()
-                    .map(|m| {
-                        let mut rp = crate::RouteParams::new();
-                        for (k, v) in m.params {
-                            rp.insert(k, v);
-                        }
-                        rp
-                    })
-                    .unwrap_or_else(crate::RouteParams::new);
-
-                let transition = router
-                    .current_route()
-                    .map(|route| route.transition.default.clone())
-                    .unwrap_or(Transition::None);
-
-                let builder = router
-                    .current_route()
-                    .and_then(|route| route.builder.clone());
-
-                (path, params, transition, builder)
-            })
-            .unwrap_or_else(|| {
-                (
-                    "/".to_string(),
-                    crate::RouteParams::new(),
-                    Transition::None,
-                    None,
-                )
-            });
+        let (router_path, route_params, route_transition, builder_opt) = {
+            let path = current_path.to_string();
+            let transition = child_route.transition.default.clone();
+            let builder = child_route.builder.clone();
+            (path, child_params, transition, builder)
+        };
 
         #[cfg(not(feature = "transition"))]
-        let (router_path, route_params, builder_opt) = cx
-            .try_global::<crate::context::GlobalRouter>()
-            .map(|router| {
-                let path = router.current_path().to_string();
-
-                let params = router
-                    .current_match_immutable()
-                    .map(|m| {
-                        let mut rp = crate::RouteParams::new();
-                        for (k, v) in m.params {
-                            rp.insert(k, v);
-                        }
-                        rp
-                    })
-                    .unwrap_or_else(crate::RouteParams::new);
-
-                let builder = router
-                    .current_route()
-                    .and_then(|route| route.builder.clone());
-
-                (path, params, builder)
-            })
-            .unwrap_or_else(|| ("/".to_string(), crate::RouteParams::new(), None));
+        let (router_path, route_params, builder_opt) = {
+            let path = current_path.to_string();
+            let builder = child_route.builder.clone();
+            (path, child_params, builder)
+        };
 
         // Check if path actually changed (not just first render)
         let path_changed = router_path != prev_path;
@@ -787,6 +788,36 @@ fn find_parent_route_internal<'a>(
                     || current_normalized.starts_with(&format!("{}/", child_full_path))
                 {
                     return Some(route);
+                }
+
+                // Check for parameter routes (e.g., :id)
+                if child_segment.starts_with(':') {
+                    // This is a parameter route - check if the path structure matches
+                    // For /products/:id, if current is /products/3, the structure matches
+                    let expected_prefix = if full_route_path.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}/", full_route_path)
+                    };
+
+                    // Get the part after the parent path
+                    let remainder = if expected_prefix.is_empty() {
+                        current_normalized
+                    } else {
+                        current_normalized
+                            .strip_prefix(&expected_prefix)
+                            .unwrap_or("")
+                    };
+
+                    // If remainder has exactly one segment (no more slashes), this param route matches
+                    if !remainder.is_empty() && !remainder.contains('/') {
+                        trace_log!(
+                            "  parameter route '{}' matches path segment '{}'",
+                            child_segment,
+                            remainder
+                        );
+                        return Some(route);
+                    }
                 }
             }
 

@@ -3,10 +3,14 @@
 //! Demonstrates nested routing with parent/child relationships.
 //! Shows how to create layouts with multiple RouterOutlets for child routes.
 
+use std::env;
+
 use gpui::*;
 use gpui_navigator::*;
 
 fn main() {
+    env_logger::init();
+
     Application::new().run(|cx: &mut App| {
         // Initialize router with nested route structure
         init_router(cx, |router| {
@@ -214,8 +218,6 @@ impl DashboardLayout {
 
 impl Render for DashboardLayout {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let outlet = cx.new(|_| RouterOutlet::new());
-
         div()
             .flex()
             .size_full()
@@ -235,8 +237,8 @@ impl Render for DashboardLayout {
                     .child(self.sidebar_link(cx, "/dashboard/analytics", "Analytics"))
                     .child(self.sidebar_link(cx, "/dashboard/settings", "Settings")),
             )
-            // Child routes render here
-            .child(div().flex_1().p_8().child(outlet))
+            // Child routes render here - RouterOutlet is stateless, just shows current child
+            .child(div().flex_1().p_8().child(cx.new(|_| RouterOutlet::new())))
     }
 }
 
@@ -369,16 +371,14 @@ impl ProductsLayout {
 
 impl Render for ProductsLayout {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let outlet = cx.new(|_| RouterOutlet::new());
-
         div()
             .flex()
             .flex_col()
             .size_full()
             .p_8()
             .child(div().text_2xl().mb_4().child("Products"))
-            // Child routes render here
-            .child(div().flex_1().child(outlet))
+            // Child routes render here - RouterOutlet is stateless
+            .child(div().flex_1().child(cx.new(|_| RouterOutlet::new())))
     }
 }
 
