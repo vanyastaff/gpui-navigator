@@ -36,13 +36,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Implement segment-based path matching in src/matching.rs: split path by '/', match literal and :param segments
-- [ ] T007 Implement RouteParams merge function in src/params.rs: merge parent + child params, child overrides on collision
-- [ ] T008 Update Route struct in src/route.rs: ensure Arc<Route> wrapping, immutable children vec
-- [ ] T009 Add navigation_id: AtomicUsize field to RouterState in src/state.rs for cancellation tracking
-- [ ] T010 [P] Implement two-phase rendering pattern in RouterOutlet (src/widgets.rs): Phase 1 resolve (immutable), Phase 2 build (mutable)
-- [ ] T011 Write unit tests for segment matching in tests/unit/matching.rs: exact match, param extraction, no match scenarios
-- [ ] T012 [P] Write unit tests for param merging in tests/unit/params.rs: parent+child, collision handling, empty params
+- [X] T006 Implement segment-based path matching in src/matching.rs: split path by '/', match literal and :param segments
+- [X] T007 Implement RouteParams merge function in src/params.rs: merge parent + child params, child overrides on collision
+- [X] T008 Update Route struct in src/route.rs: ensure Arc<Route> wrapping, immutable children vec
+- [X] T009 Add navigation_id: AtomicUsize field to RouterState in src/state.rs for cancellation tracking
+- [X] T010 [P] Implement two-phase rendering pattern in RouterOutlet (src/widgets.rs): Phase 1 resolve (immutable), Phase 2 build (mutable)
+- [X] T011 Write unit tests for segment matching in tests/unit/matching.rs: exact match, param extraction, no match scenarios
+- [X] T012 [P] Write unit tests for param merging in tests/unit/params.rs: parent+child, collision handling, empty params
 
 **Checkpoint**: Foundation ready - core routing works, user stories can now build on this
 

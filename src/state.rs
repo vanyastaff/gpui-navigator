@@ -3,10 +3,11 @@
 use crate::route::Route;
 use crate::{NavigationDirection, RouteChangeEvent, RouteMatch, RouteParams};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Router state
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RouterState {
     /// Navigation history stack
     history: Vec<String>,
@@ -18,6 +19,9 @@ pub struct RouterState {
     cache: HashMap<String, RouteMatch>,
     /// Current route parameters (for parameter inheritance in nested routing)
     current_params: RouteParams,
+    /// Navigation ID counter for cancellation tracking (T009)
+    /// Each navigation increments this, allowing detection of stale navigations
+    navigation_id: Arc<AtomicUsize>,
 }
 
 impl RouterState {
@@ -29,7 +33,26 @@ impl RouterState {
             routes: Vec::new(),
             cache: HashMap::new(),
             current_params: RouteParams::new(),
+            navigation_id: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Get current navigation ID
+    pub fn navigation_id(&self) -> usize {
+        self.navigation_id.load(Ordering::SeqCst)
+    }
+
+    /// Start a new navigation and return the new navigation ID
+    ///
+    /// This increments the navigation counter, allowing previous navigations
+    /// to detect they've been superseded and should be cancelled.
+    pub fn start_navigation(&self) -> usize {
+        self.navigation_id.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Check if a navigation is still current (not cancelled by newer navigation)
+    pub fn is_navigation_current(&self, nav_id: usize) -> bool {
+        self.navigation_id() == nav_id
     }
 
     /// Register a route
@@ -289,6 +312,20 @@ impl RouterState {
 impl Default for RouterState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for RouterState {
+    fn clone(&self) -> Self {
+        Self {
+            history: self.history.clone(),
+            current: self.current,
+            routes: self.routes.clone(),
+            cache: self.cache.clone(),
+            current_params: self.current_params.clone(),
+            // Clone Arc, not the AtomicUsize value - share navigation_id across clones
+            navigation_id: Arc::clone(&self.navigation_id),
+        }
     }
 }
 

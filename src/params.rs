@@ -90,6 +90,40 @@ impl RouteParams {
     pub fn len(&self) -> usize {
         self.params.len()
     }
+
+    /// Merge parent parameters with child parameters
+    ///
+    /// Child parameters override parent parameters in case of collision.
+    /// This is used for nested routing to inherit parent route parameters.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use gpui_navigator::RouteParams;
+    ///
+    /// let mut parent = RouteParams::new();
+    /// parent.set("workspaceId".to_string(), "123".to_string());
+    /// parent.set("view".to_string(), "list".to_string());
+    ///
+    /// let mut child = RouteParams::new();
+    /// child.set("projectId".to_string(), "456".to_string());
+    /// child.set("view".to_string(), "grid".to_string()); // Override parent
+    ///
+    /// let merged = RouteParams::merge(&parent, &child);
+    /// assert_eq!(merged.get("workspaceId"), Some(&"123".to_string()));
+    /// assert_eq!(merged.get("projectId"), Some(&"456".to_string()));
+    /// assert_eq!(merged.get("view"), Some(&"grid".to_string())); // Child wins
+    /// ```
+    pub fn merge(parent: &RouteParams, child: &RouteParams) -> RouteParams {
+        let mut merged = parent.clone();
+
+        // Child params override parent params
+        for (key, value) in child.iter() {
+            merged.insert(key.clone(), value.clone());
+        }
+
+        merged
+    }
 }
 
 // ============================================================================
