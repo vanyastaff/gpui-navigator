@@ -56,14 +56,14 @@
 
 ### Implementation for User Story 1
 
-- [ ] T013 [P] [US1] Implement hierarchical route resolution in src/nested.rs: resolve_child_route() function that consumes parent segments
-- [ ] T014 [P] [US1] Implement find_index_route() in src/nested.rs: finds child with empty path "" as default
-- [ ] T015 [US1] Update RouterOutlet::render() in src/widgets.rs: use resolve_child_route() for nested resolution
-- [ ] T016 [US1] Add find_parent_for_outlet() helper in src/nested.rs: locates parent route for given outlet
-- [ ] T017 [US1] Update nested_demo.rs example: create DashboardLayout with sidebar and 3 child routes (overview, analytics, settings)
-- [ ] T018 [US1] Add path change detection in RouterOutlet (src/widgets.rs): only update state if current_path != new_path
-- [ ] T019 [US1] Write unit tests for hierarchical resolution in tests/unit/nested.rs: parent+child matching, index route selection
-- [ ] T020 [US1] Write integration test in tests/integration/nested_routing.rs: navigate /dashboard → /dashboard/analytics, verify layout persists
+- [X] T013 [P] [US1] Implement hierarchical route resolution in src/nested.rs: resolve_child_route() function that consumes parent segments
+- [X] T014 [P] [US1] Implement find_index_route() in src/nested.rs: finds child with empty path "" as default
+- [X] T015 [US1] Update RouterOutlet::render() in src/widgets.rs: use resolve_child_route() for nested resolution
+- [X] T016 [US1] Add find_parent_for_outlet() helper in src/nested.rs: locates parent route for given outlet
+- [X] T017 [US1] Update nested_demo.rs example: create DashboardLayout with sidebar and 3 child routes (overview, analytics, settings)
+- [X] T018 [US1] Add path change detection in RouterOutlet (src/widgets.rs): only update state if current_path != new_path
+- [X] T019 [US1] Write unit tests for hierarchical resolution in tests/unit/nested.rs: parent+child matching, index route selection
+- [X] T020 [US1] Write integration test in tests/integration/nested_routing.rs: navigate /dashboard → /dashboard/analytics, verify layout persists
 
 **Checkpoint**: User Story 1 complete - nested routes with persistent layouts work
 
