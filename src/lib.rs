@@ -117,6 +117,7 @@ pub mod cache;
 // Core routing modules
 pub mod history;
 pub mod matcher;
+pub mod matching; // New segment-based matching for nested routing redesign
 #[cfg(feature = "middleware")]
 pub mod middleware;
 pub mod route;

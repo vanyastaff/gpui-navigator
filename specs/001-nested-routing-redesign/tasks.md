@@ -22,11 +22,11 @@
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Review existing codebase structure in src/ to understand current routing implementation
-- [ ] T002 [P] Add optional dependencies to Cargo.toml: lru = "0.12" (feature = "cache"), matchit = "0.8" (optional)
-- [ ] T003 [P] Create new source files per quickstart.md: src/matching.rs, src/cache.rs (feature-gated)
-- [ ] T004 Create tests/unit/ directory structure with matching.rs, params.rs, cache.rs, nested.rs
-- [ ] T005 Create tests/integration/ directory and nested_routing.rs file
+- [X] T001 Review existing codebase structure in src/ to understand current routing implementation
+- [X] T002 [P] Add optional dependencies to Cargo.toml: lru = "0.12" (feature = "cache"), matchit = "0.8" (optional)
+- [X] T003 [P] Create new source files per quickstart.md: src/matching.rs, src/cache.rs (feature-gated)
+- [X] T004 Create tests/unit/ directory structure with matching.rs, params.rs, cache.rs, nested.rs
+- [X] T005 Create tests/integration/ directory and nested_routing.rs file
 
 ---
 
