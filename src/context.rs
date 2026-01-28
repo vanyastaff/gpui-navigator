@@ -487,6 +487,7 @@ impl Navigator {
     /// ```
     pub fn push(cx: &mut impl BorrowAppContext, route: impl IntoRoute) {
         let descriptor = route.into_route();
+        crate::debug_log!("Navigator::push: pushing path '{}'", descriptor.path);
         cx.update_global::<GlobalRouter, _>(|router, _| {
             router.push(descriptor.path);
         });

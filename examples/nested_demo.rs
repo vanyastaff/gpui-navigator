@@ -122,7 +122,7 @@ impl Render for NestedDemoApp {
                     .child(self.nav_button(cx, "/dashboard", "Dashboard"))
                     .child(self.nav_button(cx, "/products", "Products")),
             )
-            // Main router outlet
+            // RouterOutlet renders child routes (HomePage, Dashboard, Products)
             .child(div().flex_1().child(self.outlet.clone()))
     }
 }
@@ -237,7 +237,7 @@ impl Render for DashboardLayout {
                     .child(self.sidebar_link(cx, "/dashboard/analytics", "Analytics"))
                     .child(self.sidebar_link(cx, "/dashboard/settings", "Settings")),
             )
-            // Child routes render here - RouterOutlet is stateless, just shows current child
+            // Child routes render here
             .child(div().flex_1().p_8().child(cx.new(|_| RouterOutlet::new())))
     }
 }
@@ -377,7 +377,7 @@ impl Render for ProductsLayout {
             .size_full()
             .p_8()
             .child(div().text_2xl().mb_4().child("Products"))
-            // Child routes render here - RouterOutlet is stateless
+            // Child routes render here
             .child(div().flex_1().child(cx.new(|_| RouterOutlet::new())))
     }
 }

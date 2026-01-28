@@ -160,7 +160,7 @@ pub use guards::{
 pub use lifecycle::{BoxedLifecycle, LifecycleResult, RouteLifecycle};
 #[cfg(feature = "middleware")]
 pub use middleware::{middleware_fn, BoxedMiddleware, RouteMiddleware};
-pub use nested::{build_child_path, resolve_child_route};
+pub use nested::{build_child_path, extract_param_name, normalize_path, resolve_child_route};
 pub use params::{QueryParams, RouteParams};
 pub use route::{
     validate_route_path, BuilderFn, IntoRoute, NamedRoute, NamedRouteRegistry, PageRoute, Route,
@@ -170,8 +170,8 @@ pub use state::{Router, RouterState};
 #[cfg(feature = "transition")]
 pub use transition::{SlideDirection, Transition, TransitionConfig};
 pub use widgets::{
-    render_router_outlet, router_link, router_outlet, router_outlet_named, DefaultPages,
-    RouterLink, RouterOutlet,
+    render_router_outlet, router_link, router_outlet, router_outlet_named, router_view,
+    DefaultPages, RouterLink, RouterOutlet, RouterView,
 };
 
 use std::collections::HashMap;

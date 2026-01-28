@@ -20,7 +20,7 @@ use std::collections::HashMap;
 /// assert_eq!(params.get("id"), Some(&"123".to_string()));
 /// assert_eq!(params.get_as::<i32>("id"), Some(123));
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RouteParams {
     params: HashMap<String, String>,
 }

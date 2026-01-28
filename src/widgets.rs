@@ -47,17 +47,32 @@ use std::time::Duration;
 ///         Route::new("settings", |_, _cx, _params| div().into_any_element()),
 ///     ]);
 /// ```
-#[derive(Clone)]
 pub struct RouterOutlet {
     /// Optional name for named outlets
     /// Default outlet has no name
     name: Option<String>,
+    /// Internal state for tracking animations and transitions
+    /// Stored as RefCell to allow interior mutability during render
+    state: std::cell::RefCell<OutletState>,
+}
+
+impl Clone for RouterOutlet {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            // Create a new state with cloned data from current state
+            state: std::cell::RefCell::new(self.state.borrow().clone()),
+        }
+    }
 }
 
 impl RouterOutlet {
     /// Create a new default outlet
     pub fn new() -> Self {
-        Self { name: None }
+        Self {
+            name: None,
+            state: std::cell::RefCell::new(OutletState::default()),
+        }
     }
 
     /// Create a named outlet
@@ -81,6 +96,7 @@ impl RouterOutlet {
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: Some(name.into()),
+            state: std::cell::RefCell::new(OutletState::default()),
         }
     }
 }
@@ -89,6 +105,67 @@ impl Default for RouterOutlet {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Create a cached RouterOutlet that persists across renders
+///
+/// This is the recommended way to use RouterOutlet in your layouts.
+/// It automatically caches the outlet entity to prevent state reset.
+///
+/// # Arguments
+/// * `window` - The window context
+/// * `cx` - The app context
+/// * `key` - Unique key for this outlet (e.g., "main", "dashboard", "sidebar")
+///
+/// # Example
+///
+/// ```ignore
+/// impl Render for MyLayout {
+///     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+///         div()
+///             .child("My Layout")
+///             .child(router_outlet(window, cx, "main"))
+///     }
+/// }
+/// ```
+pub fn router_outlet<V>(
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<'_, V>,
+    key: impl Into<String>,
+) -> impl gpui::IntoElement {
+    window
+        .use_keyed_state(gpui::ElementId::Name(key.into().into()), cx, |_, _| {
+            RouterOutlet::new()
+        })
+        .clone()
+}
+
+/// Create a cached named RouterOutlet
+///
+/// Like `router_outlet()` but for named outlets (multiple outlets in one layout).
+///
+/// # Example
+///
+/// ```ignore
+/// impl Render for MyLayout {
+///     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+///         div()
+///             .child(router_outlet(window, cx, "main"))           // default outlet
+///             .child(router_outlet_named(window, cx, "sb", "sidebar"))  // named outlet
+///     }
+/// }
+/// ```
+pub fn router_outlet_named<V>(
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<'_, V>,
+    key: impl Into<String>,
+    name: impl Into<String>,
+) -> impl gpui::IntoElement {
+    window
+        .use_keyed_state(gpui::ElementId::Name(key.into().into()), cx, move |_, _| {
+            RouterOutlet::named(name)
+        })
+        .clone()
 }
 
 use gpui::{Context, Render};
@@ -130,6 +207,10 @@ impl Default for OutletState {
 
 impl Render for RouterOutlet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        eprintln!(
+            "🔄 RouterOutlet::render() called for outlet {:?}",
+            self.name
+        );
         trace_log!("🔄 RouterOutlet::render() called");
 
         // Get current router and resolve child route (must be in scope to avoid borrow issues)
@@ -151,6 +232,10 @@ impl Render for RouterOutlet {
             let Some(parent_route) = parent_route else {
                 // No parent with children - render nothing (like React Router)
                 // This happens when RouterOutlet is used in a route without children
+                eprintln!(
+                    "⚠️ RouterOutlet: No parent route with children found for path '{}'",
+                    current_path
+                );
                 trace_log!(
                     "⚠️ RouterOutlet: No parent route with children found for path '{}'",
                     current_path
@@ -180,13 +265,10 @@ impl Render for RouterOutlet {
             (current_path, child_route, child_params)
         };
 
-        // Use keyed state to persist animation counter and content across renders
-        let state_key = SharedString::from(format!("outlet_{:?}", self.name));
-        let state = window.use_keyed_state(state_key.clone(), cx, |_, _| OutletState::default());
-
+        // Get previous path and animation counter from internal state
         let (prev_path, animation_counter) = {
-            let guard = state.read(cx);
-            (guard.current_path.clone(), guard.animation_counter)
+            let state = self.state.borrow();
+            (state.current_path.clone(), state.animation_counter)
         };
 
         // Get child route info for rendering
@@ -241,30 +323,31 @@ impl Render for RouterOutlet {
             };
 
             // Update state and save previous route for exit animation
-            state.update(cx, |s, _| {
+            {
+                let mut state = self.state.borrow_mut();
                 // When path changes, replace previous_route with current route data
                 // This way, the old previous_route (from a previous transition) is discarded
                 // and we only keep the immediately previous route for the current transition
                 if !is_initial {
-                    s.previous_route = Some(PreviousRoute {
-                        path: s.current_path.clone(),
-                        params: s.current_params.clone(),
-                        builder: s.current_builder.clone(),
+                    state.previous_route = Some(PreviousRoute {
+                        path: state.current_path.clone(),
+                        params: state.current_params.clone(),
+                        builder: state.current_builder.clone(),
                     });
                 } else {
                     // Initial navigation - no previous route
-                    s.previous_route = None;
+                    state.previous_route = None;
                 }
                 // Update state with NEW route data
-                s.current_path = router_path.clone();
-                s.current_params = route_params.clone();
-                s.current_builder = builder_opt.clone();
+                state.current_path = router_path.clone();
+                state.current_params = route_params.clone();
+                state.current_builder = builder_opt.clone();
                 #[cfg(feature = "transition")]
                 {
-                    s.current_transition = route_transition.clone();
+                    state.current_transition = route_transition.clone();
                 }
-                s.animation_counter = new_counter;
-            });
+                state.animation_counter = new_counter;
+            }
 
             new_counter
         } else {
@@ -292,12 +375,14 @@ impl Render for RouterOutlet {
             // Get previous route info for exit animation
             // Show it if it exists and its path differs from current path
             // (if paths are same, no transition is needed)
-            let previous_route = state
-                .read(cx)
-                .previous_route
-                .as_ref()
-                .filter(|prev| prev.path != router_path)
-                .cloned();
+            let previous_route = {
+                let state = self.state.borrow();
+                state
+                    .previous_route
+                    .as_ref()
+                    .filter(|prev| prev.path != router_path)
+                    .cloned()
+            };
 
             debug_log!(
                 "Previous route exists: {}, path: {:?}",
@@ -521,66 +606,6 @@ impl Render for RouterOutlet {
             )
         }
     }
-}
-
-/// Convenience function to create a default router outlet
-///
-/// **DEPRECATED**: This function is deprecated. Use `RouterOutlet` entity instead.
-///
-/// # Example
-///
-/// ```ignore
-/// use gpui_navigator::{RouterOutlet, RouteParams};
-/// use gpui::*;
-///
-/// struct Layout {
-///     outlet: Entity<RouterOutlet>,
-/// }
-///
-/// impl Layout {
-///     fn new(cx: &mut Context<'_, Self>) -> Self {
-///         Self {
-///             outlet: cx.new(|_| RouterOutlet::new()),
-///         }
-///     }
-/// }
-/// ```
-#[deprecated(since = "0.1.3", note = "Use RouterOutlet entity instead")]
-pub fn router_outlet(window: &mut Window, cx: &mut App) -> impl IntoElement {
-    render_router_outlet(window, cx, None)
-}
-
-/// Convenience function to create a named router outlet
-///
-/// **DEPRECATED**: This function is deprecated. Use `RouterOutlet::named()` entity instead.
-///
-/// # Example
-///
-/// ```ignore
-/// use gpui_navigator::{RouterOutlet, RouteParams};
-/// use gpui::*;
-///
-/// struct Layout {
-///     main_outlet: Entity<RouterOutlet>,
-///     sidebar_outlet: Entity<RouterOutlet>,
-/// }
-///
-/// impl Layout {
-///     fn new(cx: &mut Context<'_, Self>) -> Self {
-///         Self {
-///             main_outlet: cx.new(|_| RouterOutlet::new()),
-///             sidebar_outlet: cx.new(|_| RouterOutlet::named("sidebar")),
-///         }
-///     }
-/// }
-/// ```
-#[deprecated(since = "0.1.3", note = "Use RouterOutlet::named() entity instead")]
-pub fn router_outlet_named(
-    window: &mut Window,
-    cx: &mut App,
-    name: impl Into<String>,
-) -> impl IntoElement {
-    render_router_outlet(window, cx, Some(&name.into()))
 }
 
 /// RouterOutletElement - a function-based element that can access App context
@@ -831,6 +856,105 @@ fn find_parent_route_internal<'a>(
     }
 
     None
+}
+
+// ============================================================================
+// RouterView - Main Router Component (renders current route)
+// ============================================================================
+
+/// RouterView component that renders the current matched route
+///
+/// Use this at the ROOT level of your app to render top-level routes.
+/// For nested child routes within a parent, use `RouterOutlet` instead.
+///
+/// # Example
+///
+/// ```ignore
+/// struct MyApp {
+///     router_view: Entity<RouterView>,
+/// }
+///
+/// impl Render for MyApp {
+///     fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+///         div().child(self.router_view.clone())
+///     }
+/// }
+/// ```
+pub struct RouterView;
+
+impl RouterView {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Render for RouterView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        eprintln!("🔄 RouterView::render() called");
+        router_view(window, cx)
+    }
+}
+
+/// Functional RouterView - renders the current matched route
+///
+/// Use this at the ROOT level of your app to render top-level routes.
+/// For nested child routes within a parent, use `router_outlet()` instead.
+///
+/// # Example
+///
+/// ```ignore
+/// impl Render for MyApp {
+///     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+///         div().child(router_view(window, cx))
+///     }
+/// }
+/// ```
+pub fn router_view<V>(window: &mut Window, cx: &mut Context<'_, V>) -> AnyElement {
+    use std::ops::DerefMut;
+
+    // Get route and params from router, then drop the borrow
+    let (route, route_params, current_path) = {
+        let router = cx.try_global::<crate::context::GlobalRouter>();
+
+        let Some(router) = router else {
+            eprintln!("⚠️ router_view: No global router found");
+            return div().into_any_element();
+        };
+
+        let current_path = router.current_path().to_string();
+
+        // Get current route for rendering (top-level, not deeply nested)
+        let route = router.state().current_route_for_rendering();
+        let route_match = router.state().current_match_immutable();
+
+        let Some(route) = route else {
+            eprintln!("⚠️ router_view: No route found for path '{}'", current_path);
+            return div()
+                .child(format!("404: No route found for '{}'", current_path))
+                .into_any_element();
+        };
+
+        let route_params = if let Some(m) = route_match {
+            let mut params = crate::RouteParams::new();
+            for (key, value) in m.params {
+                params.set(key, value);
+            }
+            params
+        } else {
+            crate::RouteParams::new()
+        };
+
+        (route.clone(), route_params, current_path)
+    }; // router borrow ends here
+
+    // Call the route builder to render the component
+    if let Some(element) = route.build(window, cx.deref_mut(), &route_params) {
+        element
+    } else {
+        div()
+            .child("Error: Route has no builder")
+            .into_any_element()
+    }
 }
 
 // ============================================================================
