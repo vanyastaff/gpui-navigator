@@ -8,7 +8,7 @@
 //! | Variant | Constructor | Description |
 //! |---------|-------------|-------------|
 //! | [`Transition::None`] | default | No animation |
-//! | [`Transition::Fade`] | [`Transition::fade`] | Opacity 0→1 |
+//! | [`Transition::Fade`] | [`Transition::fade`] | Cross-fade (old fades out, new fades in) |
 //! | [`Transition::Slide`] | [`Transition::slide_left`], etc. | Positional slide in any direction |
 //!
 //! Each transition carries a `duration_ms` controlling animation length.
@@ -66,7 +66,7 @@ pub enum Transition {
     #[default]
     None,
 
-    /// Fade transition (simple opacity animation)
+    /// Cross-fade transition: old content fades out while new content fades in
     Fade {
         /// Duration in milliseconds
         duration_ms: u64,
@@ -120,7 +120,7 @@ impl Clone for Transition {
 }
 
 impl Transition {
-    /// Create a fade transition
+    /// Create a cross-fade transition (old fades out, new fades in simultaneously)
     pub fn fade(duration_ms: u64) -> Self {
         Self::Fade { duration_ms }
     }
@@ -252,7 +252,7 @@ pub fn apply_transition(element: impl IntoElement, transition: &Transition, prog
         Transition::None => (0.0, 0.0, 1.0),
 
         Transition::Fade { .. } => {
-            // Simple fade in effect
+            // Fade effect — progress controls opacity
             (0.0, 0.0, progress)
         }
 

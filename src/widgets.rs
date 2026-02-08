@@ -68,6 +68,12 @@ pub struct RouterOutlet {
     /// Animation counter for unique animation IDs
     #[cfg(feature = "transition")]
     animation_counter: u32,
+    /// Transition currently being animated (persists across render frames)
+    #[cfg(feature = "transition")]
+    active_transition: Option<Transition>,
+    /// When the current animation started
+    #[cfg(feature = "transition")]
+    transition_start: Option<std::time::Instant>,
 }
 
 impl Clone for RouterOutlet {
@@ -79,6 +85,10 @@ impl Clone for RouterOutlet {
             last_path: self.last_path.clone(),
             #[cfg(feature = "transition")]
             animation_counter: self.animation_counter,
+            #[cfg(feature = "transition")]
+            active_transition: self.active_transition.clone(),
+            #[cfg(feature = "transition")]
+            transition_start: self.transition_start,
         }
     }
 }
@@ -93,6 +103,10 @@ impl RouterOutlet {
             last_path: String::new(),
             #[cfg(feature = "transition")]
             animation_counter: 0,
+            #[cfg(feature = "transition")]
+            active_transition: None,
+            #[cfg(feature = "transition")]
+            transition_start: None,
         }
     }
 
@@ -105,6 +119,10 @@ impl RouterOutlet {
             last_path: String::new(),
             #[cfg(feature = "transition")]
             animation_counter: 0,
+            #[cfg(feature = "transition")]
+            active_transition: None,
+            #[cfg(feature = "transition")]
+            transition_start: None,
         }
     }
 }
@@ -256,22 +274,61 @@ impl Render for RouterOutlet {
                 .into_any_element()
         });
 
-        // Apply transition animation if path changed
+        // Apply transition animation if path changed, and keep applying
+        // it on every render frame until the animation duration expires.
+        // GPUI's `with_animation` requires the wrapper on every render.
         #[cfg(feature = "transition")]
         {
             if let Some(transition) = _transition {
                 let path_changed = current_path != self.last_path && !self.last_path.is_empty();
 
                 if path_changed {
+                    // New navigation — start animation
                     self.animation_counter = self.animation_counter.wrapping_add(1);
                     self.last_path = current_path;
 
+                    if !transition.is_none() {
+                        debug_log!(
+                            "RouterOutlet depth {}: starting {:?} (counter={})",
+                            my_depth,
+                            transition,
+                            self.animation_counter
+                        );
+                        self.active_transition = Some(transition.clone());
+                        self.transition_start = Some(std::time::Instant::now());
+                    }
+
+                    // Build exit content from previous match stack
+                    let exit_element = build_exit_element(my_depth, window, cx);
+
                     return render_with_transition(
                         element,
+                        exit_element,
                         &transition,
                         self.name.as_ref(),
                         self.animation_counter,
                     );
+                }
+
+                // Animation still in progress — keep returning the wrapper
+                if let (Some(active), Some(start)) =
+                    (&self.active_transition, self.transition_start)
+                {
+                    if start.elapsed() < active.duration() {
+                        // Rebuild exit content on every frame too
+                        let exit_element = build_exit_element(my_depth, window, cx);
+
+                        return render_with_transition(
+                            element,
+                            exit_element,
+                            active,
+                            self.name.as_ref(),
+                            self.animation_counter,
+                        );
+                    }
+                    // Animation finished — clear state
+                    self.active_transition = None;
+                    self.transition_start = None;
                 }
 
                 self.last_path = current_path;
@@ -282,10 +339,29 @@ impl Render for RouterOutlet {
     }
 }
 
-/// Render content with a transition animation (enter only, no exit animation in simplified version)
+/// Build exit content from the previous match stack (old route at same depth).
+#[cfg(feature = "transition")]
+fn build_exit_element(depth: usize, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let router = cx.try_global::<GlobalRouter>()?;
+    let prev = router.previous_stack()?;
+    let entry = prev.at_depth(depth)?;
+    let route = std::sync::Arc::clone(&entry.route);
+    let params = entry.params.clone();
+    route.build(window, cx, &params)
+}
+
+/// Render content with a cross-transition animation (enter + exit).
+///
+/// When `exit_content` is provided, both old and new content are rendered
+/// in a stacked container with opposing animations:
+/// - **Fade**: old fades out (1→0), new fades in (0→1)
+/// - **Slide Left**: old slides out left, new slides in from right
+/// - **Slide Right**: old slides out right, new slides in from left
+/// - **Slide Up/Down**: same pattern on the vertical axis
 #[cfg(feature = "transition")]
 fn render_with_transition(
-    content: AnyElement,
+    enter_content: AnyElement,
+    exit_content: Option<AnyElement>,
     transition: &Transition,
     outlet_name: Option<&String>,
     counter: u32,
@@ -293,29 +369,49 @@ fn render_with_transition(
     match transition {
         Transition::Fade { duration_ms, .. } => {
             let duration = *duration_ms;
-            div()
-                .relative()
-                .w_full()
-                .h_full()
-                .child(
+            let enter_id =
+                SharedString::from(format!("outlet_fade_enter_{:?}_{}", outlet_name, counter));
+            let exit_id =
+                SharedString::from(format!("outlet_fade_exit_{:?}_{}", outlet_name, counter));
+
+            let mut container = div().relative().w_full().h_full();
+
+            // Exit layer: old content fades out 1 → 0
+            if let Some(exit) = exit_content {
+                container = container.child(
                     div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
                         .w_full()
                         .h_full()
-                        .child(content)
-                        .opacity(0.0)
+                        .child(exit)
                         .with_animation(
-                            SharedString::from(format!(
-                                "outlet_fade_{:?}_{}",
-                                outlet_name, counter
-                            )),
+                            exit_id,
                             Animation::new(Duration::from_millis(duration)),
-                            |this, delta| {
-                                let progress = delta.clamp(0.0, 1.0);
-                                this.opacity(progress)
-                            },
+                            |this, delta| this.opacity(1.0 - delta.clamp(0.0, 1.0)),
                         ),
-                )
-                .into_any_element()
+                );
+            }
+
+            // Enter layer: new content fades in 0 → 1
+            container = container.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h_full()
+                    .child(enter_content)
+                    .opacity(0.0)
+                    .with_animation(
+                        enter_id,
+                        Animation::new(Duration::from_millis(duration)),
+                        |this, delta| this.opacity(delta.clamp(0.0, 1.0)),
+                    ),
+            );
+
+            container.into_any_element()
         }
         Transition::Slide {
             duration_ms,
@@ -323,65 +419,113 @@ fn render_with_transition(
             ..
         } => {
             let duration = *duration_ms;
-            let animation_id =
-                SharedString::from(format!("outlet_slide_{:?}_{}", outlet_name, counter));
+            let enter_id =
+                SharedString::from(format!("outlet_slide_enter_{:?}_{}", outlet_name, counter));
+            let exit_id =
+                SharedString::from(format!("outlet_slide_exit_{:?}_{}", outlet_name, counter));
 
             match direction {
                 SlideDirection::Left | SlideDirection::Right => {
                     let is_left = matches!(direction, SlideDirection::Left);
-                    div()
-                        .relative()
-                        .w_full()
-                        .h_full()
-                        .overflow_hidden()
-                        .child(
+                    // Enter: slides from +1 → 0 (left) or -1 → 0 (right)
+                    let enter_start: f32 = if is_left { 1.0 } else { -1.0 };
+                    // Exit: slides from 0 → -1 (left) or 0 → +1 (right)
+                    let exit_end: f32 = if is_left { -1.0 } else { 1.0 };
+
+                    let mut container = div().relative().w_full().h_full().overflow_hidden();
+
+                    if let Some(exit) = exit_content {
+                        container = container.child(
                             div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
                                 .w_full()
                                 .h_full()
-                                .child(content)
-                                .left(relative(if is_left { 1.0 } else { -1.0 }))
+                                .child(exit)
                                 .with_animation(
-                                    animation_id,
+                                    exit_id,
                                     Animation::new(Duration::from_millis(duration)),
                                     move |this, delta| {
                                         let progress = delta.clamp(0.0, 1.0);
-                                        let start = if is_left { 1.0 } else { -1.0 };
-                                        let offset = start * (1.0 - progress);
-                                        this.left(relative(offset))
+                                        this.left(relative(exit_end * progress))
                                     },
                                 ),
-                        )
-                        .into_any_element()
+                        );
+                    }
+
+                    container = container.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .w_full()
+                            .h_full()
+                            .child(enter_content)
+                            .left(relative(enter_start))
+                            .with_animation(
+                                enter_id,
+                                Animation::new(Duration::from_millis(duration)),
+                                move |this, delta| {
+                                    let progress = delta.clamp(0.0, 1.0);
+                                    this.left(relative(enter_start * (1.0 - progress)))
+                                },
+                            ),
+                    );
+
+                    container.into_any_element()
                 }
                 SlideDirection::Up | SlideDirection::Down => {
                     let is_up = matches!(direction, SlideDirection::Up);
-                    div()
-                        .relative()
-                        .w_full()
-                        .h_full()
-                        .overflow_hidden()
-                        .child(
+                    let enter_start: f32 = if is_up { 1.0 } else { -1.0 };
+                    let exit_end: f32 = if is_up { -1.0 } else { 1.0 };
+
+                    let mut container = div().relative().w_full().h_full().overflow_hidden();
+
+                    if let Some(exit) = exit_content {
+                        container = container.child(
                             div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
                                 .w_full()
                                 .h_full()
-                                .child(content)
-                                .top(relative(if is_up { 1.0 } else { -1.0 }))
+                                .child(exit)
                                 .with_animation(
-                                    animation_id,
+                                    exit_id,
                                     Animation::new(Duration::from_millis(duration)),
                                     move |this, delta| {
                                         let progress = delta.clamp(0.0, 1.0);
-                                        let start = if is_up { 1.0 } else { -1.0 };
-                                        let offset = start * (1.0 - progress);
-                                        this.top(relative(offset))
+                                        this.top(relative(exit_end * progress))
                                     },
                                 ),
-                        )
-                        .into_any_element()
+                        );
+                    }
+
+                    container = container.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .w_full()
+                            .h_full()
+                            .child(enter_content)
+                            .top(relative(enter_start))
+                            .with_animation(
+                                enter_id,
+                                Animation::new(Duration::from_millis(duration)),
+                                move |this, delta| {
+                                    let progress = delta.clamp(0.0, 1.0);
+                                    this.top(relative(enter_start * (1.0 - progress)))
+                                },
+                            ),
+                    );
+
+                    container.into_any_element()
                 }
             }
         }
-        Transition::None => content,
+        Transition::None => enter_content,
     }
 }
 

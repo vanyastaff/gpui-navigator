@@ -20,7 +20,7 @@ fn main() {
             router.add_route(
                 Route::new("/fade", |_, _, _| fade_page().into_any_element())
                     .name("fade")
-                    .transition(Transition::fade(1000)), // 1 секунда
+                    .transition(Transition::fade(1000)),
             );
 
             router.add_route(
@@ -144,7 +144,7 @@ fn sidebar(
         ))
         .child(nav_button(
             cx,
-            "Fade Transition",
+            "Fade",
             "/fade",
             &current_path,
             outlet.clone(),
@@ -226,7 +226,7 @@ fn nav_button(
 fn home_page() -> impl IntoElement {
     page_container(
         "Home - No Transition".to_string(),
-        "This page has no transition animation.".to_string(),
+        "This page has no transition animation. Simple page without any animation.".to_string(),
         rgb(0x2196f3),
         rgb(0xe3f2fd), // Light blue background
     )
@@ -235,7 +235,7 @@ fn home_page() -> impl IntoElement {
 fn fade_page() -> impl IntoElement {
     page_container(
         "Fade Transition".to_string(),
-        "Transition::fade(300) - Cross-fade effect with 300ms duration.".to_string(),
+        "Transition::fade(1000) - Cross-fade: old fades out while new fades in.".to_string(),
         rgb(0x9c27b0),
         rgb(0xf3e5f5), // Light purple background
     )
