@@ -116,8 +116,6 @@ pub mod cache;
 
 // Core routing modules
 pub mod history;
-pub mod matcher;
-pub mod matching; // Legacy segment-based matching (to be removed)
 #[cfg(feature = "middleware")]
 pub mod middleware;
 pub mod route;

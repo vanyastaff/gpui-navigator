@@ -387,10 +387,10 @@ fn resolve_recursive(
         }
 
         // More segments remain → recurse into children
-        if !route.children.is_empty() {
-            if resolve_recursive(&route.children, after, depth + 1, &params, stack) {
-                return true;
-            }
+        if !route.children.is_empty()
+            && resolve_recursive(&route.children, after, depth + 1, &params, stack)
+        {
+            return true;
         }
 
         // No children matched (or no children) → backtrack

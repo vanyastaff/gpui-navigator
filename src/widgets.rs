@@ -16,7 +16,6 @@ use crate::resolve::{
 };
 use crate::{debug_log, trace_log};
 use gpui::*;
-use std::ops::DerefMut;
 
 #[cfg(feature = "transition")]
 use crate::transition::{SlideDirection, Transition};
@@ -179,7 +178,9 @@ impl Render for RouterOutlet {
             }
         }; // router borrow ends here
 
-        let Some((route, params, current_path, _transition)) = resolved else {
+        #[allow(clippy::used_underscore_binding)]
+        let Some((route, params, current_path, _transition)) = resolved
+        else {
             return div().into_any_element();
         };
 
@@ -191,13 +192,11 @@ impl Render for RouterOutlet {
             set_outlet_depth(depth.saturating_sub(1));
         }
 
-        let element = route
-            .build(window, cx.deref_mut(), &params)
-            .unwrap_or_else(|| {
-                div()
-                    .child(format!("Route '{}' has no builder", route.config.path))
-                    .into_any_element()
-            });
+        let element = route.build(window, cx, &params).unwrap_or_else(|| {
+            div()
+                .child(format!("Route '{}' has no builder", route.config.path))
+                .into_any_element()
+        });
 
         // Restore depth for sibling outlets
         set_outlet_depth(saved_depth);
@@ -215,7 +214,7 @@ impl Render for RouterOutlet {
                     return render_with_transition(
                         element,
                         &transition,
-                        &self.name,
+                        self.name.as_ref(),
                         self.animation_counter,
                     );
                 }
@@ -233,7 +232,7 @@ impl Render for RouterOutlet {
 fn render_with_transition(
     content: AnyElement,
     transition: &Transition,
-    outlet_name: &Option<String>,
+    outlet_name: Option<&String>,
     counter: u32,
 ) -> AnyElement {
     match transition {
@@ -406,6 +405,12 @@ pub fn render_router_outlet(window: &mut Window, cx: &mut App, name: Option<&str
 /// RouterView component that renders the current matched route
 pub struct RouterView;
 
+impl Default for RouterView {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl RouterView {
     pub fn new() -> Self {
         Self
@@ -458,7 +463,7 @@ pub fn router_view<V>(window: &mut Window, cx: &mut Context<'_, V>) -> AnyElemen
     set_outlet_depth(0);
 
     route
-        .build(window, cx.deref_mut(), &params)
+        .build(window, cx, &params)
         .unwrap_or_else(|| div().child("Root route has no builder").into_any_element())
 }
 

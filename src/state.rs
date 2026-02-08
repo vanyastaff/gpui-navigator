@@ -123,107 +123,33 @@ impl RouterState {
         None
     }
 
-    /// Get the matched Route for current path
+    /// Get the first top-level Route that matches the current path.
     ///
-    /// For nested routes, returns the parent route that should render.
-    /// For leaf routes, returns the route itself.
-    ///
-    /// Searches through the route tree recursively starting from registered routes.
+    /// With MatchStack architecture, rendering uses `GlobalRouter::match_stack()`.
+    /// This method is kept for compatibility — it returns the first registered
+    /// route whose pattern matches the current path (exact or prefix).
     pub fn current_route(&self) -> Option<&Arc<Route>> {
         let path = self.current_path();
-        find_matching_route_in_tree(
-            &self.routes,
-            path.trim_start_matches('/').trim_end_matches('/'),
-        )
-    }
-
-    /// Get the route to render at the TOP level (for router_view)
-    ///
-    /// Returns the first-level route that matches the current path.
-    /// Unlike current_route(), this DOES NOT recurse into children.
-    /// This is used by router_view() to render top-level layouts.
-    pub fn current_route_for_rendering(&self) -> Option<&Arc<Route>> {
-        let path = self.current_path();
-        let path_normalized = path.trim_start_matches('/').trim_end_matches('/');
-
         for route in &self.routes {
-            let route_path = route
-                .config
-                .path
-                .trim_start_matches('/')
-                .trim_end_matches('/');
-
-            // Check if path matches this route or is under it
-            let matches = if route_path.is_empty() {
-                // Root route matches everything if it has children, otherwise only empty path
-                path_normalized.is_empty() || !route.get_children().is_empty()
-            } else {
-                // Exact match or path starts with route path
-                path_normalized == route_path
-                    || path_normalized.starts_with(&format!("{}/", route_path))
-            };
-
-            if matches {
+            if route.matches(path).is_some() {
+                return Some(route);
+            }
+            // Also check if path is under this route (prefix match for nested routes)
+            let route_path = route.config.path.trim_matches('/');
+            let path_trimmed = path.trim_matches('/');
+            if !route_path.is_empty()
+                && path_trimmed.starts_with(route_path)
+                && (path_trimmed.len() == route_path.len()
+                    || path_trimmed[route_path.len()..].starts_with('/'))
+            {
+                return Some(route);
+            }
+            // Root route matches everything if it has children
+            if route_path.is_empty() && !route.children.is_empty() {
                 return Some(route);
             }
         }
-
         None
-    }
-
-    /// Find the deepest parent route with children that matches the path
-    ///
-    /// **DEPRECATED**: Use find_matching_route_in_tree instead.
-    ///
-    /// Returns parent route if path matches the route (exact or deeper) AND route has children.
-    /// For exact matches, this allows RouterOutlet to render index routes.
-    #[deprecated(since = "0.1.4", note = "Use find_matching_route_in_tree instead")]
-    #[allow(dead_code)]
-    fn find_parent_with_children(&self, path: &str) -> Option<&Arc<Route>> {
-        let path_normalized = path.trim_start_matches('/').trim_end_matches('/');
-
-        let mut best_match: Option<&Arc<Route>> = None;
-        let mut best_depth = 0;
-
-        for route in &self.routes {
-            // Skip routes without children
-            if route.children.is_empty() {
-                continue;
-            }
-
-            let route_path = route
-                .config
-                .path
-                .trim_start_matches('/')
-                .trim_end_matches('/');
-
-            // Check if current path matches this route (exact or deeper)
-            let matches = if route_path.is_empty() {
-                // Root route "/" matches everything
-                true
-            } else {
-                // Exact match OR path goes deeper than route
-                path_normalized == route_path
-                    || (path_normalized.starts_with(route_path)
-                        && path_normalized.len() > route_path.len()
-                        && path_normalized[route_path.len()..].starts_with('/'))
-            };
-
-            if matches {
-                let depth = route_path.split('/').filter(|s| !s.is_empty()).count();
-
-                // Prefer deeper routes, but for same depth prefer exact matches
-                let is_better =
-                    depth > best_depth || (depth == best_depth && path_normalized == route_path);
-
-                if is_better {
-                    best_match = Some(route);
-                    best_depth = depth;
-                }
-            }
-        }
-
-        best_match
     }
 
     /// Navigate to a new path
@@ -375,151 +301,6 @@ impl Router {
 impl Default for Router {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Find the route that should render for the given path
-///
-/// Recursively searches through the route tree to find the most appropriate route.
-/// For paths with nested routes, returns the parent route that should render (not the final leaf).
-/// For leaf routes without children, returns the route itself.
-///
-/// # T040: Root-Level Index Route Support
-///
-/// When navigating to "/" (root path) and no exact match exists, this function checks for:
-/// 1. Route with empty path ("") - explicit root index route
-/// 2. Route with path "index" - alternative naming convention
-///
-/// # Algorithm
-///
-/// 1. Try each top-level route
-/// 2. For each route, check if it matches the path (exact or deeper)
-/// 3. If it matches and has children, recursively search children
-/// 4. Return the deepest matching parent route (with children), or leaf route (without children)
-/// 5. For root path ("/"), if no match, check for index routes
-///
-/// # Examples
-///
-/// ```text
-/// Routes:
-///   /dashboard (has children)
-///     /overview
-///     /analytics
-///
-/// For path "/dashboard/analytics":
-///   Returns: /dashboard route (parent with children)
-///   RouterOutlet in /dashboard will then render /analytics child
-///
-/// For path "/about" (no children):
-///   Returns: /about route itself
-///
-/// For path "/" with no explicit "/" route but has "" (index) route:
-///   Returns: "" route (root index)
-/// ```
-fn find_matching_route_in_tree<'a>(routes: &'a [Arc<Route>], path: &str) -> Option<&'a Arc<Route>> {
-    let path_normalized = path.trim_start_matches('/').trim_end_matches('/');
-
-    // Try each top-level route
-    for route in routes {
-        if let Some(matched) = find_matching_route(route, path_normalized, "") {
-            return Some(matched);
-        }
-    }
-
-    // T040: For root path, check for index routes if no exact match
-    if path_normalized.is_empty() {
-        // Priority 1: Empty path ("") - explicit root index route
-        for route in routes {
-            let route_path = route
-                .config
-                .path
-                .trim_start_matches('/')
-                .trim_end_matches('/');
-            if route_path.is_empty() {
-                return Some(route);
-            }
-        }
-
-        // Priority 2: Path "index" - alternative naming convention
-        for route in routes {
-            let route_path = route
-                .config
-                .path
-                .trim_start_matches('/')
-                .trim_end_matches('/');
-            if route_path == "index" {
-                return Some(route);
-            }
-        }
-    }
-
-    None
-}
-
-/// Recursively find matching route in the tree
-///
-/// accumulated_path - the path built up from parent routes
-fn find_matching_route<'a>(
-    route: &'a Arc<Route>,
-    path: &str,
-    accumulated_path: &str,
-) -> Option<&'a Arc<Route>> {
-    let route_path = route
-        .config
-        .path
-        .trim_start_matches('/')
-        .trim_end_matches('/');
-
-    // Build full path for this route
-    let full_route_path = if accumulated_path.is_empty() {
-        if route_path.is_empty() {
-            String::new()
-        } else {
-            route_path.to_string()
-        }
-    } else if route_path.is_empty() {
-        accumulated_path.to_string()
-    } else {
-        format!("{}/{}", accumulated_path, route_path)
-    };
-
-    // Check if current path matches this route
-    let matches = if full_route_path.is_empty() {
-        // Root route - only matches empty path or if it has children (then it can match deeper paths)
-        path.is_empty() || !route.children.is_empty()
-    } else {
-        // Check for exact match or path going deeper
-        path == full_route_path
-            || (path.starts_with(&full_route_path)
-                && path.len() > full_route_path.len()
-                && path[full_route_path.len()..].starts_with('/'))
-    };
-
-    if !matches {
-        return None;
-    }
-
-    // If this route has children, try to find a deeper match
-    if !route.children.is_empty() {
-        // First, check if any child matches (recursively)
-        for child in &route.children {
-            if let Some(matched) = find_matching_route(child, path, &full_route_path) {
-                return Some(matched);
-            }
-        }
-
-        // No child matched but path is under this route
-        // Return this route (RouterOutlet will render the appropriate child)
-        if path == full_route_path || path.starts_with(&format!("{}/", full_route_path)) {
-            return Some(route);
-        }
-    }
-
-    // Exact match and no children - return this route
-    if path == full_route_path {
-        Some(route)
-    } else {
-        None
     }
 }
 
