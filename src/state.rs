@@ -178,6 +178,7 @@ impl RouterState {
     /// Returns parent route if path matches the route (exact or deeper) AND route has children.
     /// For exact matches, this allows RouterOutlet to render index routes.
     #[deprecated(since = "0.1.4", note = "Use find_matching_route_in_tree instead")]
+    #[allow(dead_code)]
     fn find_parent_with_children(&self, path: &str) -> Option<&Arc<Route>> {
         let path_normalized = path.trim_start_matches('/').trim_end_matches('/');
 
@@ -365,12 +366,19 @@ impl Default for Router {
 /// For paths with nested routes, returns the parent route that should render (not the final leaf).
 /// For leaf routes without children, returns the route itself.
 ///
+/// # T040: Root-Level Index Route Support
+///
+/// When navigating to "/" (root path) and no exact match exists, this function checks for:
+/// 1. Route with empty path ("") - explicit root index route
+/// 2. Route with path "index" - alternative naming convention
+///
 /// # Algorithm
 ///
 /// 1. Try each top-level route
 /// 2. For each route, check if it matches the path (exact or deeper)
 /// 3. If it matches and has children, recursively search children
 /// 4. Return the deepest matching parent route (with children), or leaf route (without children)
+/// 5. For root path ("/"), if no match, check for index routes
 ///
 /// # Examples
 ///
@@ -386,6 +394,9 @@ impl Default for Router {
 ///
 /// For path "/about" (no children):
 ///   Returns: /about route itself
+///
+/// For path "/" with no explicit "/" route but has "" (index) route:
+///   Returns: "" route (root index)
 /// ```
 fn find_matching_route_in_tree<'a>(routes: &'a [Arc<Route>], path: &str) -> Option<&'a Arc<Route>> {
     let path_normalized = path.trim_start_matches('/').trim_end_matches('/');
@@ -394,6 +405,33 @@ fn find_matching_route_in_tree<'a>(routes: &'a [Arc<Route>], path: &str) -> Opti
     for route in routes {
         if let Some(matched) = find_matching_route(route, path_normalized, "") {
             return Some(matched);
+        }
+    }
+
+    // T040: For root path, check for index routes if no exact match
+    if path_normalized.is_empty() {
+        // Priority 1: Empty path ("") - explicit root index route
+        for route in routes {
+            let route_path = route
+                .config
+                .path
+                .trim_start_matches('/')
+                .trim_end_matches('/');
+            if route_path.is_empty() {
+                return Some(route);
+            }
+        }
+
+        // Priority 2: Path "index" - alternative naming convention
+        for route in routes {
+            let route_path = route
+                .config
+                .path
+                .trim_start_matches('/')
+                .trim_end_matches('/');
+            if route_path == "index" {
+                return Some(route);
+            }
         }
     }
 

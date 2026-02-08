@@ -207,31 +207,61 @@ impl Default for OutletState {
 
 impl Render for RouterOutlet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        eprintln!(
-            "🔄 RouterOutlet::render() called for outlet {:?}",
-            self.name
-        );
+        #[cfg(debug_assertions)]
+        {
+            static RENDER_COUNT: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            let count = RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count % 10 == 0 {
+                eprintln!("⚠️ RouterOutlet::render() called {} times", count);
+            }
+        }
         trace_log!("🔄 RouterOutlet::render() called");
 
-        // Get current router and resolve child route (must be in scope to avoid borrow issues)
-        let (current_path, child_route, child_params) = {
-            let router = cx.try_global::<crate::context::GlobalRouter>();
+        // OPTIMIZATION: Check if path changed before doing expensive route resolution
+        let router = cx.try_global::<crate::context::GlobalRouter>();
 
-            let Some(router) = router else {
-                // No router - render nothing (like React Router)
-                // In development, log warning to help developers debug
-                trace_log!("⚠️ RouterOutlet: No global router found");
-                return div().into_any_element();
+        let Some(router) = router else {
+            // No router - render nothing (like React Router)
+            trace_log!("⚠️ RouterOutlet: No global router found");
+            return div().into_any_element();
+        };
+
+        let current_path = router.current_path().to_string();
+
+        // Check cached path first to avoid unnecessary work
+        let prev_path = {
+            let state = self.state.borrow();
+            state.current_path.clone()
+        };
+
+        // If path hasn't changed, render cached content
+        if current_path == prev_path && !prev_path.is_empty() {
+            let cached_result = {
+                let state = self.state.borrow();
+                state.current_builder.clone()
             };
 
-            let current_path = router.current_path().to_string();
+            if let Some(builder) = cached_result {
+                let cached_params = {
+                    let state = self.state.borrow();
+                    state.current_params.clone()
+                };
 
+                // Render cached route without re-resolving
+                return builder(window, cx, &cached_params);
+            }
+        }
+
+        // Path changed or no cache - resolve child route
+        let (current_path, child_route, child_params) = {
             // Find parent route that has children
             let parent_route = find_parent_route_for_path(router.state().routes(), &current_path);
 
             let Some(parent_route) = parent_route else {
                 // No parent with children - render nothing (like React Router)
                 // This happens when RouterOutlet is used in a route without children
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "⚠️ RouterOutlet: No parent route with children found for path '{}'",
                     current_path
@@ -244,13 +274,31 @@ impl Render for RouterOutlet {
             };
 
             // Resolve which CHILD route should be rendered
+            // T033: Add performance logging for resolution >1ms
             let route_params = crate::RouteParams::new();
+
+            #[cfg(debug_assertions)]
+            let start = std::time::Instant::now();
+
             let resolved = resolve_child_route(
                 parent_route,
                 &current_path,
                 &route_params,
                 self.name.as_deref(),
             );
+
+            #[cfg(debug_assertions)]
+            {
+                let elapsed = start.elapsed();
+                if elapsed.as_micros() > 1000 {
+                    debug_log!(
+                        "⚠️ Slow route resolution: {}µs ({}ms) for path '{}'",
+                        elapsed.as_micros(),
+                        elapsed.as_millis(),
+                        current_path
+                    );
+                }
+            }
 
             let Some((child_route, child_params)) = resolved else {
                 // No matching child - render nothing (like React Router)
@@ -794,28 +842,41 @@ fn find_parent_route_internal<'a>(
                 return Some(deeper);
             }
 
+            // Check if current path exactly matches this route
+            // This means we're navigating TO this route (not through it to a child)
+            // Return this route as the parent that should render its children (e.g., index route)
+            // Example: path="/dashboard", route="/dashboard" -> return to render index/overview
+            if current_normalized == full_route_path {
+                return Some(route);
+            }
+
             // No deeper parent found - check if any direct child matches or contains the current path
-            // This route is the parent if current path matches or is under one of its children
+            // This route is the parent if current path is under one of its children
             for child in route.get_children() {
                 let child_segment = child
                     .config
                     .path
                     .trim_start_matches('/')
                     .trim_end_matches('/');
+
+                // Skip empty child segments (index routes) - they don't affect parent matching
+                if child_segment.is_empty() {
+                    continue;
+                }
+
                 let child_full_path = if full_route_path.is_empty() {
                     child_segment.to_string()
                 } else {
                     format!("{}/{}", full_route_path, child_segment)
                 };
 
-                // Check if current path matches this child or is under it
-                if current_normalized == child_full_path
-                    || current_normalized.starts_with(&format!("{}/", child_full_path))
-                {
+                // Check if current path matches this child exactly
+                // (only if child has no children, otherwise recursion would have caught it)
+                if current_normalized == child_full_path && child.get_children().is_empty() {
                     return Some(route);
                 }
 
-                // Check for parameter routes (e.g., :id)
+                // Check for parameter routes (e.g., :id, :workspaceId, etc.)
                 if child_segment.starts_with(':') {
                     // This is a parameter route - check if the path structure matches
                     // For /products/:id, if current is /products/3, the structure matches
@@ -834,8 +895,12 @@ fn find_parent_route_internal<'a>(
                             .unwrap_or("")
                     };
 
-                    // If remainder has exactly one segment (no more slashes), this param route matches
-                    if !remainder.is_empty() && !remainder.contains('/') {
+                    // If remainder has exactly one segment (no more slashes) AND child has no children,
+                    // this param route matches
+                    if !remainder.is_empty()
+                        && !remainder.contains('/')
+                        && child.get_children().is_empty()
+                    {
                         trace_log!(
                             "  parameter route '{}' matches path segment '{}'",
                             child_segment,
@@ -843,14 +908,22 @@ fn find_parent_route_internal<'a>(
                         );
                         return Some(route);
                     }
-                }
-            }
 
-            // If path exactly matches this route and no children matched,
-            // return this route as parent (for rendering outlet when on the route itself)
-            // Only do this if we're at the top level (accumulated_path is empty or this is the root)
-            if current_normalized == full_route_path && accumulated_path.is_empty() {
-                return Some(route);
+                    // FIXED: If remainder has multiple segments AND this child has children,
+                    // this could be a nested parameter route (e.g., workspace/:id/project/:id)
+                    // Return this route as parent so nested outlets can render
+                    if !remainder.is_empty()
+                        && remainder.contains('/')
+                        && !child.get_children().is_empty()
+                    {
+                        trace_log!(
+                            "  parameter route '{}' with children matches nested path '{}'",
+                            child_segment,
+                            remainder
+                        );
+                        return Some(route);
+                    }
+                }
             }
         }
     }
@@ -913,7 +986,7 @@ pub fn router_view<V>(window: &mut Window, cx: &mut Context<'_, V>) -> AnyElemen
     use std::ops::DerefMut;
 
     // Get route and params from router, then drop the borrow
-    let (route, route_params, current_path) = {
+    let (route, route_params, _current_path) = {
         let router = cx.try_global::<crate::context::GlobalRouter>();
 
         let Some(router) = router else {

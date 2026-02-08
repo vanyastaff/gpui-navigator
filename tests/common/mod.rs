@@ -2,6 +2,8 @@
 //!
 //! Provides fixtures, helpers, and assertion utilities for unit and integration tests.
 
+#![allow(dead_code)]
+
 use gpui::*;
 use gpui_navigator::*;
 

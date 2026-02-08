@@ -3,8 +3,6 @@
 //! Demonstrates nested routing with parent/child relationships.
 //! Shows how to create layouts with multiple RouterOutlets for child routes.
 
-use std::env;
-
 use gpui::*;
 use gpui_navigator::*;
 
@@ -217,7 +215,13 @@ impl DashboardLayout {
 }
 
 impl Render for DashboardLayout {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // OPTIMIZATION: Create outlet once using use_keyed_state
+        let outlet =
+            window.use_keyed_state(ElementId::Name("dashboard-outlet".into()), cx, |_, _| {
+                RouterOutlet::new()
+            });
+
         div()
             .flex()
             .size_full()
@@ -238,7 +242,7 @@ impl Render for DashboardLayout {
                     .child(self.sidebar_link(cx, "/dashboard/settings", "Settings")),
             )
             // Child routes render here
-            .child(div().flex_1().p_8().child(cx.new(|_| RouterOutlet::new())))
+            .child(div().flex_1().p_8().child(outlet.clone()))
     }
 }
 
@@ -370,7 +374,13 @@ impl ProductsLayout {
 }
 
 impl Render for ProductsLayout {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // OPTIMIZATION: Create outlet once using use_keyed_state
+        let outlet =
+            window.use_keyed_state(ElementId::Name("products-outlet".into()), cx, |_, _| {
+                RouterOutlet::new()
+            });
+
         div()
             .flex()
             .flex_col()
@@ -378,7 +388,7 @@ impl Render for ProductsLayout {
             .p_8()
             .child(div().text_2xl().mb_4().child("Products"))
             // Child routes render here
-            .child(div().flex_1().child(cx.new(|_| RouterOutlet::new())))
+            .child(div().flex_1().child(outlet.clone()))
     }
 }
 
