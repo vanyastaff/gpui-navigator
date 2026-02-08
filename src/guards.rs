@@ -185,7 +185,7 @@ impl AuthGuard {
 
     /// Create an auth guard that always allows access (for testing/development).
     #[cfg(debug_assertions)]
-    #[must_use] 
+    #[must_use]
     pub fn allow_all() -> Self {
         Self::new(|_| true, "/login")
     }
@@ -393,7 +393,7 @@ pub struct Guards {
 
 impl Guards {
     /// Create a new AND composition from a vec of boxed guards.
-    #[must_use] 
+    #[must_use]
     pub fn new(guards: Vec<Box<dyn RouteGuard>>) -> Self {
         Self { guards }
     }
@@ -446,7 +446,7 @@ impl GuardBuilder {
     }
 
     /// Build the final [`Guards`].
-    #[must_use] 
+    #[must_use]
     pub fn build(self) -> Guards {
         Guards::new(self.guards)
     }
@@ -514,6 +514,7 @@ impl RouteGuard for NotGuard {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_pass_by_ref_mut)]
 mod tests {
     use super::*;
 

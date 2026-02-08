@@ -144,7 +144,7 @@ pub struct GlobalRouter {
 
 impl GlobalRouter {
     /// Create a new global router with empty state and no registered routes.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -153,14 +153,14 @@ impl GlobalRouter {
     ///
     /// Outlets call this during render to find their route by depth index.
     /// The stack is built once per navigation, so this is O(1).
-    #[must_use] 
+    #[must_use]
     pub const fn match_stack(&self) -> &MatchStack {
         &self.match_stack
     }
 
     /// Get the previous match stack (for transition animations).
     #[cfg(feature = "transition")]
-    #[must_use] 
+    #[must_use]
     pub const fn previous_stack(&self) -> Option<&MatchStack> {
         self.previous_stack.as_ref()
     }
@@ -494,7 +494,7 @@ impl GlobalRouter {
     /// Generate a URL for a named route by substituting `params` into its pattern.
     ///
     /// Returns `None` if the name is not registered.
-    #[must_use] 
+    #[must_use]
     pub fn url_for(&self, name: &str, params: &RouteParams) -> Option<String> {
         self.named_routes.url_for(name, params)
     }
@@ -504,7 +504,7 @@ impl GlobalRouter {
     // ========================================================================
 
     /// Return the current navigation path.
-    #[must_use] 
+    #[must_use]
     pub fn current_path(&self) -> &str {
         self.state.current_path()
     }
@@ -515,25 +515,25 @@ impl GlobalRouter {
     }
 
     /// Get current route match (immutable, no caching).
-    #[must_use] 
+    #[must_use]
     pub fn current_match_immutable(&self) -> Option<crate::RouteMatch> {
         self.state.current_match_immutable()
     }
 
     /// Get the current matched Route.
-    #[must_use] 
+    #[must_use]
     pub fn current_route(&self) -> Option<&Arc<crate::route::Route>> {
         self.state.current_route()
     }
 
     /// Check if can go back.
-    #[must_use] 
+    #[must_use]
     pub const fn can_go_back(&self) -> bool {
         self.state.can_go_back()
     }
 
     /// Check if can go forward.
-    #[must_use] 
+    #[must_use]
     pub fn can_go_forward(&self) -> bool {
         self.state.can_go_forward()
     }
@@ -544,7 +544,7 @@ impl GlobalRouter {
     }
 
     /// Get state reference.
-    #[must_use] 
+    #[must_use]
     pub const fn state(&self) -> &RouterState {
         &self.state
     }
@@ -557,7 +557,7 @@ impl GlobalRouter {
 
     /// Get nested route cache statistics.
     #[cfg(feature = "cache")]
-    #[must_use] 
+    #[must_use]
     pub const fn cache_stats(&self) -> &CacheStats {
         self.nested_cache.stats()
     }
@@ -567,7 +567,7 @@ impl GlobalRouter {
     // ========================================================================
 
     /// Get a cached component view by key.
-    #[must_use] 
+    #[must_use]
     pub fn get_cached_component(&self, key: &str) -> Option<&AnyView> {
         self.component_cache.get(key)
     }
@@ -595,7 +595,7 @@ impl GlobalRouter {
 
     /// Check if there's a transition override set.
     #[cfg(feature = "transition")]
-    #[must_use] 
+    #[must_use]
     pub const fn has_next_transition(&self) -> bool {
         self.next_transition.is_some()
     }
@@ -1046,6 +1046,7 @@ impl Navigator {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_pass_by_ref_mut)]
 mod tests {
     use super::*;
     use gpui::{IntoElement, TestAppContext};

@@ -2,6 +2,8 @@
 //!
 //! Demonstrates `RouterLink` usage with valid and invalid routes.
 
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use gpui::prelude::*;
 use gpui::{
     div, px, relative, rgb, size, App, AppContext, Application, Bounds, Div, Entity, FontWeight,

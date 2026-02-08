@@ -3,7 +3,11 @@
 //! These tests verify the complete router workflow including initialization,
 //! navigation, guards, and route matching.
 
-#![allow(clippy::future_not_send, clippy::unused_async)]
+#![allow(
+    clippy::future_not_send,
+    clippy::unused_async,
+    clippy::needless_pass_by_ref_mut
+)]
 
 use gpui::{div, IntoElement, ParentElement, TestAppContext};
 use gpui_navigator::*;

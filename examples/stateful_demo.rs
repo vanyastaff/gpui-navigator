@@ -4,6 +4,8 @@
 //! This is the CORRECT way to build pages in GPUI - using Entity-based components
 //! that maintain state across navigation.
 
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use gpui::{
     div, px, rgb, size, App, AppContext, Application, Bounds, Context, Entity, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, Styled, TitlebarOptions, Window, WindowBounds,

@@ -3,6 +3,8 @@
 //! Demonstrates nested routing with parent/child relationships.
 //! Shows how to create layouts with multiple `RouterOutlets` for child routes.
 
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use gpui::{
     div, px, rgb, size, App, AppContext, Application, Bounds, Context, ElementId, Entity,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, Styled, TitlebarOptions,

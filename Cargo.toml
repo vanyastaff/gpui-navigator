@@ -35,8 +35,6 @@ nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Dependency-related (we can't control gpui's transitive deps)
 multiple_crate_versions = "allow"
-# API compatibility (GPUI requires &mut for context params)
-needless_pass_by_ref_mut = "allow"
 
 [dependencies]
 gpui = "0.2"

@@ -96,7 +96,7 @@ impl Clone for RouterOutlet {
 
 impl RouterOutlet {
     /// Create a new default outlet
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             name: None,
@@ -137,7 +137,7 @@ impl Default for RouterOutlet {
 
 impl RouterOutlet {
     /// Render a named outlet (separate from the enter/exit depth tracking).
-    fn render_named(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn render_named(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
         let resolved = {
             let router = cx.try_global::<GlobalRouter>();
 
@@ -617,7 +617,7 @@ impl Default for RouterView {
 
 impl RouterView {
     /// Create a new `RouterView`.
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self
     }
@@ -846,7 +846,7 @@ impl DefaultPages {
     }
 
     /// Render 404 not found page (custom or default)
-    #[must_use] 
+    #[must_use]
     pub fn render_not_found(&self) -> AnyElement {
         self.not_found
             .as_ref()
@@ -854,7 +854,7 @@ impl DefaultPages {
     }
 
     /// Render loading page (custom or default)
-    #[must_use] 
+    #[must_use]
     pub fn render_loading(&self) -> AnyElement {
         self.loading
             .as_ref()
@@ -862,7 +862,7 @@ impl DefaultPages {
     }
 
     /// Render error page (custom or default)
-    #[must_use] 
+    #[must_use]
     pub fn render_error(&self, message: &str) -> AnyElement {
         self.error.as_ref().map_or_else(
             || default_error_page(message).into_any_element(),

@@ -143,6 +143,7 @@ where
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_pass_by_ref_mut)]
 mod tests {
     use super::*;
     use gpui::TestAppContext;

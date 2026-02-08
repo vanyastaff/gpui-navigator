@@ -1,5 +1,7 @@
 //! Interactive demo of route transition animations
 
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use gpui::prelude::*;
 use gpui::{
     div, px, relative, rgb, size, App, AppContext, Application, Bounds, Entity, FontWeight,

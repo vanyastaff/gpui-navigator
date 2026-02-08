@@ -67,7 +67,7 @@ pub enum NavigationAction {
 
 impl NavigationAction {
     /// Create a result that allows navigation to proceed (alias for [`Continue`](Self::Continue)).
-    #[must_use] 
+    #[must_use]
     pub const fn allow() -> Self {
         Self::Continue
     }
@@ -96,25 +96,25 @@ impl NavigationAction {
     }
 
     /// Check if this action allows navigation to continue.
-    #[must_use] 
+    #[must_use]
     pub const fn is_continue(&self) -> bool {
         matches!(self, Self::Continue)
     }
 
     /// Check if this action denies navigation.
-    #[must_use] 
+    #[must_use]
     pub const fn is_deny(&self) -> bool {
         matches!(self, Self::Deny { .. })
     }
 
     /// Check if this action redirects navigation.
-    #[must_use] 
+    #[must_use]
     pub const fn is_redirect(&self) -> bool {
         matches!(self, Self::Redirect { .. })
     }
 
     /// Get the redirect path, if this is a redirect action.
-    #[must_use] 
+    #[must_use]
     pub fn redirect_path(&self) -> Option<&str> {
         match self {
             Self::Redirect { to, .. } => Some(to.as_str()),
@@ -199,6 +199,7 @@ pub trait RouteLifecycle: Send + Sync + 'static {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_pass_by_ref_mut)]
 mod tests {
     use super::*;
 
