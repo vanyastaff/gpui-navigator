@@ -94,9 +94,7 @@ pub struct NamedRouteRegistry {
 impl NamedRouteRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
-        Self {
-            routes: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Register a named route
@@ -895,37 +893,34 @@ impl std::fmt::Debug for Route {
 /// - Dynamic segments: `/users/:id`
 /// - Wildcard: `/files/*`
 fn match_path(pattern: &str, path: &str) -> Option<RouteMatch> {
-    let pattern_segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-    let path_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-    // Handle wildcard
-    if pattern_segments.last() == Some(&"*") {
-        if path_segments.len() < pattern_segments.len() - 1 {
-            return None;
-        }
-    } else if pattern_segments.len() != path_segments.len() {
-        return None;
-    }
+    let pattern_iter = pattern.split('/').filter(|s| !s.is_empty());
+    let mut path_iter = path.split('/').filter(|s| !s.is_empty());
 
     let mut route_match = RouteMatch::new(path.to_string());
 
-    for (i, pattern_seg) in pattern_segments.iter().enumerate() {
-        if *pattern_seg == "*" {
+    for pattern_seg in pattern_iter {
+        if pattern_seg == "*" {
             // Wildcard matches rest of path
-            break;
+            return Some(route_match);
         }
 
+        let Some(path_seg) = path_iter.next() else {
+            // Path exhausted before pattern — no match
+            return None;
+        };
+
         if let Some(param_name) = pattern_seg.strip_prefix(':') {
-            // Dynamic segment
-            if let Some(path_seg) = path_segments.get(i) {
-                route_match
-                    .params
-                    .insert(param_name.to_string(), path_seg.to_string());
-            }
-        } else if pattern_segments.get(i) != path_segments.get(i) {
-            // Static segment mismatch
+            route_match
+                .params
+                .insert(param_name.to_string(), path_seg.to_string());
+        } else if pattern_seg != path_seg {
             return None;
         }
+    }
+
+    // All pattern segments consumed — path must also be exhausted
+    if path_iter.next().is_some() {
+        return None;
     }
 
     Some(route_match)

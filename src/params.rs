@@ -43,13 +43,14 @@ use std::collections::HashMap;
 /// assert_eq!(params.get("id"), Some(&"123".to_string()));
 /// assert_eq!(params.get_as::<i32>("id"), Some(123));
 /// ```
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RouteParams {
     params: HashMap<String, String>,
 }
 
 impl RouteParams {
     /// Create empty route parameters.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -75,13 +76,13 @@ impl RouteParams {
     }
 
     /// Insert or overwrite a parameter.
-    pub fn insert(&mut self, key: String, value: String) {
-        self.params.insert(key, value);
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.params.insert(key.into(), value.into());
     }
 
     /// Set a parameter (alias for [`insert`](Self::insert)).
-    pub fn set(&mut self, key: String, value: String) {
-        self.params.insert(key, value);
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.params.insert(key.into(), value.into());
     }
 
     /// Return `true` if the given key is present.
@@ -139,12 +140,9 @@ impl RouteParams {
     /// ```
     pub fn merge(parent: &RouteParams, child: &RouteParams) -> RouteParams {
         let mut merged = parent.clone();
-
-        // Child params override parent params
-        for (key, value) in child.iter() {
-            merged.insert(key.clone(), value.clone());
-        }
-
+        merged
+            .params
+            .extend(child.params.iter().map(|(k, v)| (k.clone(), v.clone())));
         merged
     }
 
@@ -312,13 +310,14 @@ mod tests {
 /// assert_eq!(query.get_as::<i32>("page"), Some(1));
 /// assert_eq!(query.get_all("tag").unwrap().len(), 2);
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryParams {
     params: HashMap<String, Vec<String>>,
 }
 
 impl QueryParams {
     /// Create empty query parameters.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -374,8 +373,11 @@ impl QueryParams {
     /// Append a value for the given key.
     ///
     /// If the key already exists, the new value is added to the list (not replaced).
-    pub fn insert(&mut self, key: String, value: String) {
-        self.params.entry(key).or_default().push(value);
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.params
+            .entry(key.into())
+            .or_default()
+            .push(value.into());
     }
 
     /// Return `true` if the given key is present.

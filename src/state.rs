@@ -109,8 +109,10 @@ impl RouterState {
     }
 
     /// Return the current path in the history stack.
+    ///
+    /// Falls back to `"/"` if internal state is inconsistent (should never happen).
     pub fn current_path(&self) -> &str {
-        &self.history[self.current]
+        self.history.get(self.current).map_or("/", String::as_str)
     }
 
     /// Return a slice of all registered routes (in registration order).
@@ -363,40 +365,6 @@ impl Clone for RouterState {
             // Clone Arc, not the AtomicUsize value - share navigation_id across clones
             navigation_id: Arc::clone(&self.navigation_id),
         }
-    }
-}
-
-/// Thin wrapper around [`RouterState`] for standalone usage.
-///
-/// In most applications you will interact with
-/// [`GlobalRouter`](crate::context::GlobalRouter) instead, which adds
-/// guards, middleware, and GPUI integration on top of this struct.
-pub struct Router {
-    state: RouterState,
-}
-
-impl Router {
-    /// Create a new router with default state (initial path `"/"`).
-    pub fn new() -> Self {
-        Self {
-            state: RouterState::new(),
-        }
-    }
-
-    /// Get mutable reference to state
-    pub fn state_mut(&mut self) -> &mut RouterState {
-        &mut self.state
-    }
-
-    /// Get reference to state
-    pub fn state(&self) -> &RouterState {
-        &self.state
-    }
-}
-
-impl Default for Router {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -33,7 +33,8 @@ use gpui::{div, px, Div, IntoElement, ParentElement, Styled};
 use std::time::Duration;
 
 /// Direction for slide transitions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SlideDirection {
     /// Slide from left to right
     Left,
@@ -61,6 +62,7 @@ pub enum SlideDirection {
 /// assert_eq!(slide.duration(), Duration::from_millis(300));
 /// ```
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum Transition {
     /// No transition animation
     #[default]

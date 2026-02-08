@@ -144,18 +144,7 @@ pub struct GlobalRouter {
 impl GlobalRouter {
     /// Create a new global router with empty state and no registered routes.
     pub fn new() -> Self {
-        Self {
-            state: RouterState::new(),
-            match_stack: MatchStack::new(),
-            #[cfg(feature = "transition")]
-            previous_stack: None,
-            #[cfg(feature = "cache")]
-            nested_cache: RouteCache::new(),
-            named_routes: NamedRouteRegistry::new(),
-            #[cfg(feature = "transition")]
-            next_transition: None,
-            component_cache: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Get the pre-resolved match stack for the current path.
@@ -308,14 +297,28 @@ impl GlobalRouter {
         let event = match op {
             NavigateOp::Push => self.state.push(path),
             NavigateOp::Replace => self.state.replace(path),
-            NavigateOp::Back => {
-                // We already validated peek_back_path, so unwrap is safe
-                self.state.back().expect("back() should succeed after peek")
-            }
-            NavigateOp::Forward => self
-                .state
-                .forward()
-                .expect("forward() should succeed after peek"),
+            NavigateOp::Back => match self.state.back() {
+                Some(event) => event,
+                None => {
+                    error_log!("back() returned None after peek succeeded");
+                    return NavigationResult::Error(
+                        crate::error::NavigationError::NavigationFailed {
+                            message: "History back failed unexpectedly".into(),
+                        },
+                    );
+                }
+            },
+            NavigateOp::Forward => match self.state.forward() {
+                Some(event) => event,
+                None => {
+                    error_log!("forward() returned None after peek succeeded");
+                    return NavigationResult::Error(
+                        crate::error::NavigationError::NavigationFailed {
+                            message: "History forward failed unexpectedly".into(),
+                        },
+                    );
+                }
+            },
         };
 
         // Resolve match stack immediately after navigation
@@ -620,7 +623,18 @@ impl GlobalRouter {
 
 impl Default for GlobalRouter {
     fn default() -> Self {
-        Self::new()
+        Self {
+            state: RouterState::new(),
+            match_stack: MatchStack::new(),
+            #[cfg(feature = "transition")]
+            previous_stack: None,
+            #[cfg(feature = "cache")]
+            nested_cache: RouteCache::new(),
+            named_routes: NamedRouteRegistry::new(),
+            #[cfg(feature = "transition")]
+            next_transition: None,
+            component_cache: HashMap::new(),
+        }
     }
 }
 

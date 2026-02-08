@@ -38,6 +38,7 @@ use std::sync::Arc;
 /// Every call to [`GlobalRouter::push`](crate::context::GlobalRouter::push)
 /// (and friends) returns this enum.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum NavigationResult {
     /// Navigation succeeded
     Success { path: String },
@@ -57,6 +58,7 @@ pub enum NavigationResult {
 /// Implements [`std::error::Error`] and [`Display`](std::fmt::Display) for
 /// idiomatic error handling.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum NavigationError {
     /// Route not found
     RouteNotFound { path: String },

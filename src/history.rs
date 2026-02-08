@@ -302,7 +302,7 @@ impl Default for History {
 }
 
 /// Navigation event from history operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationEvent {
     /// Previous path
     pub from: Option<String>,

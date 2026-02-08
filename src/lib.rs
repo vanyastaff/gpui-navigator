@@ -172,7 +172,7 @@ pub use route::{
     validate_route_path, BuilderFn, IntoRoute, NamedRoute, NamedRouteRegistry, PageRoute, Route,
     RouteConfig, RouteDescriptor,
 };
-pub use state::{Router, RouterState};
+pub use state::RouterState;
 #[cfg(feature = "transition")]
 pub use transition::{SlideDirection, Transition, TransitionConfig};
 pub use widgets::{
@@ -196,7 +196,7 @@ use std::collections::HashMap;
 ///
 /// assert_eq!(route_match.params.get("id"), Some(&"123".to_string()));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteMatch {
     /// The matched path
     pub path: String,
@@ -219,15 +219,15 @@ impl RouteMatch {
 
     /// Add a route parameter to the match.
     #[must_use]
-    pub fn with_param(mut self, key: String, value: String) -> Self {
-        self.params.insert(key, value);
+    pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.params.insert(key.into(), value.into());
         self
     }
 
     /// Add a query parameter to the match.
     #[must_use]
-    pub fn with_query(mut self, key: String, value: String) -> Self {
-        self.query.insert(key, value);
+    pub fn with_query(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.query.insert(key.into(), value.into());
         self
     }
 }
@@ -235,7 +235,8 @@ impl RouteMatch {
 /// Navigation direction indicator.
 ///
 /// Used to determine the direction of navigation for animations and history management.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum NavigationDirection {
     /// Navigating forward to a new route
     Forward,
@@ -249,7 +250,7 @@ pub enum NavigationDirection {
 ///
 /// Contains information about the navigation that occurred, including
 /// the source and destination paths and the direction of navigation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteChangeEvent {
     /// The previous path (None if this is the first navigation)
     pub from: Option<String>,

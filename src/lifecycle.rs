@@ -45,6 +45,7 @@ use gpui::App;
 /// assert_eq!(action.redirect_path(), Some("/login"));
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum NavigationAction {
     /// Allow navigation to proceed.
     Continue,
