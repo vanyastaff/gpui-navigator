@@ -2271,7 +2271,6 @@ dependencies = [
  "gpui",
  "log",
  "lru",
- "matchit",
  "tokio",
  "tracing",
 ]
@@ -3224,12 +3223,6 @@ checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "matchit"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f926ade0c4e170215ae43342bf13b9310a437609c81f29f86c5df6657582ef9"
 
 [[package]]
 name = "maybe-rayon"

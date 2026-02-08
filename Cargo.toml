@@ -87,7 +87,6 @@ gpui = "0.2"
 
 # Optional dependencies
 lru = { version = "0.16", optional = true }
-matchit = { version = "0.8", optional = true }
 log = { version = "0.4", optional = true }
 tracing = { version = "0.1", optional = true }
 

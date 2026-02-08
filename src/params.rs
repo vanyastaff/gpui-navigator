@@ -425,39 +425,53 @@ impl QueryParams {
 }
 
 /// Simple URI component encoding (encode special characters)
+///
+/// Encodes non-unreserved characters as percent-encoded UTF-8 bytes,
+/// correctly handling multi-byte Unicode characters.
 fn encode_uri_component(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ' ' => "%20".to_string(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
+    use std::fmt::Write;
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
+            _ => {
+                let mut buf = [0u8; 4];
+                for byte in c.encode_utf8(&mut buf).bytes() {
+                    let _ = write!(result, "%{:02X}", byte);
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Simple URI component decoding
+///
+/// Decodes percent-encoded UTF-8 byte sequences back into characters.
+/// Also handles `+` as space (form encoding).
 fn decode_uri_component(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
+    let mut bytes = Vec::with_capacity(s.len());
+    let mut chars = s.chars();
 
     while let Some(c) = chars.next() {
         if c == '%' {
-            // Try to decode hex pair
             let hex: String = chars.by_ref().take(2).collect();
             if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                result.push(byte as char);
+                bytes.push(byte);
             } else {
-                result.push('%');
-                result.push_str(&hex);
+                bytes.push(b'%');
+                bytes.extend_from_slice(hex.as_bytes());
             }
         } else if c == '+' {
-            result.push(' ');
+            bytes.push(b' ');
         } else {
-            result.push(c);
+            let mut buf = [0u8; 4];
+            let encoded = c.encode_utf8(&mut buf);
+            bytes.extend_from_slice(encoded.as_bytes());
         }
     }
 
-    result
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 // Query parameters tests

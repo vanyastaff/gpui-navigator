@@ -60,7 +60,7 @@ pub enum SlideDirection {
 /// let slide = Transition::slide_left(300);
 /// assert_eq!(slide.duration(), Duration::from_millis(300));
 /// ```
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum Transition {
     /// No transition animation
     #[default]
@@ -79,44 +79,6 @@ pub enum Transition {
         /// Duration in milliseconds
         duration_ms: u64,
     },
-}
-
-impl std::fmt::Debug for Transition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::None => write!(f, "Transition::None"),
-            Self::Fade { duration_ms } => f
-                .debug_struct("Transition::Fade")
-                .field("duration_ms", duration_ms)
-                .finish(),
-            Self::Slide {
-                direction,
-                duration_ms,
-            } => f
-                .debug_struct("Transition::Slide")
-                .field("direction", direction)
-                .field("duration_ms", duration_ms)
-                .finish(),
-        }
-    }
-}
-
-impl Clone for Transition {
-    fn clone(&self) -> Self {
-        match self {
-            Self::None => Self::None,
-            Self::Fade { duration_ms } => Self::Fade {
-                duration_ms: *duration_ms,
-            },
-            Self::Slide {
-                direction,
-                duration_ms,
-            } => Self::Slide {
-                direction: *direction,
-                duration_ms: *duration_ms,
-            },
-        }
-    }
 }
 
 impl Transition {

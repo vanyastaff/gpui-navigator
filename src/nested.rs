@@ -368,44 +368,36 @@ fn resolve_child_route_impl(
 fn find_index_route(children: &[Arc<Route>], params: RouteParams) -> Option<ResolvedChildRoute> {
     trace_log!("find_index_route: searching {} children", children.len());
 
-    // T037: Prioritize index routes by checking for empty path first
-    // Priority 1: Empty path ("") - explicit index route
-    for child in children {
-        let child_path_normalized = normalize_path(&child.config.path);
-        let child_path = child_path_normalized.trim_matches('/');
+    // T037: Prioritize index routes
+    // Single pass: check both empty path (priority 1) and "index" (priority 2)
+    let mut index_fallback: Option<&Arc<Route>> = None;
 
-        trace_log!(
-            "find_index_route: checking child path: '{}' (original: '{}', normalized: '{}')",
-            child_path,
-            child.config.path,
-            child_path_normalized
-        );
+    for child in children {
+        let child_path = child.config.path.trim_matches('/');
 
         if child_path.is_empty() {
             trace_log!(
-                "find_index_route: ✓ found index route with empty path '{}'",
+                "find_index_route: found index route with empty path '{}'",
                 child.config.path
             );
             return Some((Arc::clone(child), params));
+        }
+
+        if child_path == "index" && index_fallback.is_none() {
+            index_fallback = Some(child);
         }
     }
 
-    // Priority 2: Path "index" - alternative naming convention
-    for child in children {
-        let child_path_normalized = normalize_path(&child.config.path);
-        let child_path = child_path_normalized.trim_matches('/');
-
-        if child_path == "index" {
-            trace_log!(
-                "find_index_route: ✓ found index route with path 'index' (original: '{}')",
-                child.config.path
-            );
-            return Some((Arc::clone(child), params));
-        }
+    if let Some(child) = index_fallback {
+        trace_log!(
+            "find_index_route: found index route with path 'index' (original: '{}')",
+            child.config.path
+        );
+        return Some((Arc::clone(child), params));
     }
 
     trace_log!(
-        "find_index_route: ✗ no index route found among {} children",
+        "find_index_route: no index route found among {} children",
         children.len()
     );
     None

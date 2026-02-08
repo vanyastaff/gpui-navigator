@@ -349,6 +349,37 @@ pub type RouteBuilder =
 /// routes around is via `Arc<Route>`.
 pub type RouteRef = Arc<Route>;
 
+/// Look up a cached component view by `key`, or create and cache a new one.
+///
+/// Used by [`Route::component`] and [`Route::component_with_params`] to
+/// avoid duplicating the cache-check/create/store pattern.
+fn get_or_create_cached_component<T: Render + 'static>(
+    cx: &mut App,
+    key: String,
+    create: impl FnOnce() -> T,
+) -> AnyElement {
+    // Check the global component cache first (survives across navigations)
+    if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
+        if let Some(cached) = router.get_cached_component(&key) {
+            return cached.clone().into_any_element();
+        }
+    }
+
+    // Not cached — create a new entity and cache it
+    let entity: gpui::Entity<T> = cx.new(|_| create());
+    let view: AnyView = entity.into();
+
+    if cx.try_global::<crate::context::GlobalRouter>().is_some() {
+        cx.update_global::<crate::context::GlobalRouter, _>(
+            |router: &mut crate::context::GlobalRouter, _| {
+                router.cache_component(key, view.clone());
+            },
+        );
+    }
+
+    view.into_any_element()
+}
+
 /// A single route in the navigation tree.
 ///
 /// Combines a path pattern, an optional builder function, child routes, and
@@ -486,28 +517,8 @@ impl Route {
 
         Self::new(path_str, move |_window, cx, _| {
             let key = format!("route:{}:{:?}", key_path, type_id);
-
-            // Check the global component cache first (survives across navigations)
-            if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
-                if let Some(cached) = router.get_cached_component(&key) {
-                    return cached.clone().into_any_element();
-                }
-            }
-
-            // Not cached — create a new entity and cache it
             let create_fn = create.clone();
-            let entity: gpui::Entity<T> = cx.new(|_| create_fn());
-            let view: AnyView = entity.into();
-
-            if cx.try_global::<crate::context::GlobalRouter>().is_some() {
-                cx.update_global::<crate::context::GlobalRouter, _>(
-                    |router: &mut crate::context::GlobalRouter, _| {
-                        router.cache_component(key, view.clone());
-                    },
-                );
-            }
-
-            view.into_any_element()
+            get_or_create_cached_component(cx, key, create_fn)
         })
     }
 
@@ -554,36 +565,15 @@ impl Route {
         let type_id = std::any::TypeId::of::<T>();
 
         Self::new(path_str, move |_window, cx, params| {
-            // Create unique key from path + type + parameter values
             let params_key = params
                 .iter()
                 .map(|(k, v)| format!("{}={}", k, v))
                 .collect::<Vec<_>>()
                 .join("&");
             let key = format!("route:{}:{:?}?{}", key_path, type_id, params_key);
-
-            // Check the global component cache first (survives across navigations)
-            if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
-                if let Some(cached) = router.get_cached_component(&key) {
-                    return cached.clone().into_any_element();
-                }
-            }
-
-            // Not cached — create a new entity and cache it
             let params_clone = params.clone();
             let create_fn = create.clone();
-            let entity: gpui::Entity<T> = cx.new(|_| create_fn(&params_clone));
-            let view: AnyView = entity.into();
-
-            if cx.try_global::<crate::context::GlobalRouter>().is_some() {
-                cx.update_global::<crate::context::GlobalRouter, _>(
-                    |router: &mut crate::context::GlobalRouter, _| {
-                        router.cache_component(key, view.clone());
-                    },
-                );
-            }
-
-            view.into_any_element()
+            get_or_create_cached_component(cx, key, || create_fn(&params_clone))
         })
     }
 
@@ -649,10 +639,9 @@ impl Route {
             });
 
             if !has_index && !self.config.path.is_empty() {
-                eprintln!(
-                    "⚠️  Route '{}' has {} children but no index route (path=\"\" or \"index\").\n\
-                     Navigating to '{}' alone will show no content. Consider adding an index route:\n\
-                     Route::new(\"\", |_, _, _| div().child(\"Default Content\")).into()",
+                warn_log!(
+                    "Route '{}' has {} children but no index route (path=\"\" or \"index\"). \
+                     Navigating to '{}' alone will show no content.",
                     self.config.path,
                     children.len(),
                     self.config.path

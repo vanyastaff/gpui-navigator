@@ -384,42 +384,11 @@ impl GlobalRouter {
         accumulated: &str,
         out: &mut Vec<(&'a dyn crate::guards::RouteGuard, i32)>,
     ) {
-        let route_path = route
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
-
-        let full = if accumulated.is_empty() {
-            route_path.to_string()
-        } else if route_path.is_empty() {
-            accumulated.to_string()
-        } else {
-            format!("{}/{}", accumulated, route_path)
-        };
-
-        // Check if this route's path is a prefix of the target (or exact match).
-        // We also need to handle parameter segments like `:id`.
-        let matches = if full.is_empty() {
-            // Root route matches everything
-            true
-        } else {
-            path_matches_prefix(path, &full)
-        };
-
-        if !matches {
-            return;
-        }
-
-        // Collect this route's guards
-        for guard in &route.guards {
-            out.push((guard.as_ref(), guard.priority()));
-        }
-
-        // Recurse into children
-        for child in route.get_children() {
-            Self::collect_guards_recursive(child, path, &full, out);
-        }
+        walk_matching_routes(route, path, accumulated, &mut |r, _full| {
+            for guard in &r.guards {
+                out.push((guard.as_ref(), guard.priority()));
+            }
+        });
     }
 
     /// Run `before_navigation` on all middleware attached to matching routes.
@@ -486,37 +455,11 @@ impl GlobalRouter {
         accumulated: &str,
         out: &mut Vec<(&'a dyn crate::middleware::RouteMiddleware, i32)>,
     ) {
-        let route_path = route
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
-
-        let full = if accumulated.is_empty() {
-            route_path.to_string()
-        } else if route_path.is_empty() {
-            accumulated.to_string()
-        } else {
-            format!("{}/{}", accumulated, route_path)
-        };
-
-        let matches = if full.is_empty() {
-            true
-        } else {
-            path_matches_prefix(path, &full)
-        };
-
-        if !matches {
-            return;
-        }
-
-        for mw in &route.middleware {
-            out.push((mw.as_ref(), mw.priority()));
-        }
-
-        for child in route.get_children() {
-            Self::collect_middleware_recursive(child, path, &full, out);
-        }
+        walk_matching_routes(route, path, accumulated, &mut |r, _full| {
+            for mw in &r.middleware {
+                out.push((mw.as_ref(), mw.priority()));
+            }
+        });
     }
 
     // ========================================================================
@@ -686,6 +629,49 @@ impl Global for GlobalRouter {}
 // ============================================================================
 // Helper: path prefix matching with parameter support
 // ============================================================================
+
+/// Walk the route tree, calling `visitor` on each route whose accumulated path
+/// is a prefix of `target_path`. The visitor receives the route and the full
+/// accumulated path.
+///
+/// This factored-out helper avoids duplicating tree-walk logic between guard
+/// collection and middleware collection.
+fn walk_matching_routes<'a>(
+    route: &'a Arc<Route>,
+    target_path: &str,
+    accumulated: &str,
+    visitor: &mut dyn FnMut(&'a Route, &str),
+) {
+    let route_path = route
+        .config
+        .path
+        .trim_start_matches('/')
+        .trim_end_matches('/');
+
+    let full = if accumulated.is_empty() {
+        route_path.to_string()
+    } else if route_path.is_empty() {
+        accumulated.to_string()
+    } else {
+        format!("{}/{}", accumulated, route_path)
+    };
+
+    let matches = if full.is_empty() {
+        true
+    } else {
+        path_matches_prefix(target_path, &full)
+    };
+
+    if !matches {
+        return;
+    }
+
+    visitor(route, &full);
+
+    for child in route.get_children() {
+        walk_matching_routes(child, target_path, &full, visitor);
+    }
+}
 
 /// Check if `path` matches `prefix` as a route prefix (supports `:param` segments).
 ///
