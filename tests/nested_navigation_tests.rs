@@ -202,7 +202,7 @@ fn test_deep_nesting_setup() {
     // Setup: /level1 -> /level1/level2 -> /level1/level2/level3
     let level3 = Arc::new(Route::new("level3", test_builder));
     let level2 = Arc::new(Route::new("level2", test_builder).children(vec![level3]));
-    let level1 = Arc::new(Route::new("/level1", test_builder).children(vec![level2.clone()]));
+    let level1 = Arc::new(Route::new("/level1", test_builder).children(vec![level2]));
 
     let params = RouteParams::new();
 

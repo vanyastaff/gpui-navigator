@@ -1089,12 +1089,12 @@ mod tests {
         assert_eq!(cx.read(Navigator::current_path), "/page2");
         assert!(cx.read(Navigator::can_pop));
 
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/page1");
         assert!(cx.read(Navigator::can_pop));
         assert!(cx.read(Navigator::can_go_forward));
 
-        cx.update(|cx| Navigator::forward(cx));
+        cx.update(Navigator::forward);
         assert_eq!(cx.read(Navigator::current_path), "/page2");
         assert!(!cx.read(Navigator::can_go_forward));
     }
@@ -1122,7 +1122,7 @@ mod tests {
 
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/");
     }
 
@@ -1141,7 +1141,7 @@ mod tests {
         cx.update(|cx| Navigator::push(cx, "/page1"));
         assert!(cx.read(Navigator::can_pop));
 
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert!(!cx.read(Navigator::can_pop));
     }
 
@@ -1172,13 +1172,13 @@ mod tests {
 
         assert_eq!(cx.read(Navigator::current_path), "/step3");
 
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/step2");
 
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/step1");
 
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/");
     }
 

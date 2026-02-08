@@ -445,7 +445,7 @@ mod tests {
             HistoryEntry::new("/page2".to_string()),
         ];
 
-        history.restore(entries.clone(), 1);
+        history.restore(entries, 1);
 
         assert_eq!(history.len(), 3);
         assert_eq!(history.current_path(), "/page1");

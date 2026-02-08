@@ -266,9 +266,7 @@ impl RoleGuard {
 
 impl RouteGuard for RoleGuard {
     fn check(&self, cx: &App, _request: &NavigationRequest) -> NavigationAction {
-        let has_role = (self.role_extractor)(cx)
-            .map(|role| role == self.required_role)
-            .unwrap_or(false);
+        let has_role = (self.role_extractor)(cx).is_some_and(|role| role == self.required_role);
 
         if has_role {
             NavigationAction::Continue

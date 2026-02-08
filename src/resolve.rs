@@ -122,7 +122,7 @@ thread_local! {
 /// This should only be called ONCE per outlet (on first render).
 /// After that, use `set_parent_depth()` with the saved depth.
 pub fn enter_outlet() -> usize {
-    let parent = PARENT_DEPTH.with(|p| p.get());
+    let parent = PARENT_DEPTH.with(Cell::get);
 
     let my_depth = match parent {
         None => 0,        // ROOT outlet
@@ -159,7 +159,7 @@ pub fn current_outlet_depth() -> usize {
 
 /// Get the raw parent depth value (for debugging/testing).
 pub fn current_parent_depth() -> Option<usize> {
-    PARENT_DEPTH.with(|p| p.get())
+    PARENT_DEPTH.with(Cell::get)
 }
 
 // ============================================================================
@@ -617,6 +617,7 @@ pub fn resolve_named_outlet(
 
         // Simple single-segment match (named outlets are typically flat)
         if child_path == remaining[0] || child_path.starts_with(':') {
+            #[allow(clippy::redundant_clone)]
             let mut child_params = params.clone();
             if child_path.starts_with(':') {
                 let name = child_path.trim_start_matches(':');

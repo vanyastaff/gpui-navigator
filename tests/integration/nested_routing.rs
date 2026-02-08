@@ -151,10 +151,10 @@ mod nested_routing_integration {
         // Verify Route::component() creates stateful routes
         // This is a compile-time check - if it compiles, the method exists
         cx.update(|_cx| {
-            let _route = Route::component("/test", || TestComponent);
+            let route = Route::component("/test", || TestComponent);
 
             // Component will be cached by GPUI's use_keyed_state when rendered
-            assert_eq!(_route.config.path, "/test");
+            assert_eq!(route.config.path, "/test");
         });
     }
 
@@ -162,13 +162,16 @@ mod nested_routing_integration {
     async fn test_route_component_with_params_method_exists(cx: &mut gpui::TestAppContext) {
         // Verify Route::component_with_params() creates parameterized stateful routes
         cx.update(|_cx| {
-            let _route = Route::component_with_params("/test/:id", |params| {
-                let id = params.get("id").unwrap_or(&"default".to_string()).clone();
+            let route = Route::component_with_params("/test/:id", |params| {
+                let id = params
+                    .get("id")
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string());
                 TestComponentWithId(id)
             });
 
             // Each unique param combo will get its own cached instance
-            assert_eq!(_route.config.path, "/test/:id");
+            assert_eq!(route.config.path, "/test/:id");
         });
     }
 
@@ -197,7 +200,7 @@ mod nested_routing_integration {
             init_router(cx, |router| {
                 router.add_route(Route::component("/", || HomePage));
                 router.add_route(Route::component("/counter", || StatefulCounter::new(0)));
-                router.add_route(Route::component("/form", || StatefulForm::new()));
+                router.add_route(Route::component("/form", StatefulForm::new));
             });
         });
 
@@ -210,11 +213,11 @@ mod nested_routing_integration {
         assert_eq!(cx.read(Navigator::current_path), "/form");
 
         // Navigate back to counter
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/counter");
 
         // Navigate back to home
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/");
     }
 
@@ -226,7 +229,7 @@ mod nested_routing_integration {
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::component_with_params("/user/:id", |params| {
-                    let id = params.get("id").unwrap_or(&"0".to_string()).clone();
+                    let id = params.get("id").cloned().unwrap_or_else(|| "0".to_string());
                     UserProfile::new(id)
                 }));
             });
@@ -252,7 +255,7 @@ mod nested_routing_integration {
                 router.add_route(Route::component("/dashboard", || DashboardLayout).children(
                     vec![
                         Route::component("overview", || StatefulCounter::new(0)).into(),
-                        Route::component("settings", || StatefulForm::new()).into(),
+                        Route::component("settings", StatefulForm::new).into(),
                     ],
                 ));
             });
@@ -327,7 +330,7 @@ mod nested_routing_integration {
                     )
                     .children(vec![Route::component("level3", || StatefulCounter::new(0))
                         .children(vec![
-                            Route::component("level4", || StatefulForm::new()).into()
+                            Route::component("level4", StatefulForm::new).into()
                         ])
                         .into()])
                     .into()],
@@ -343,7 +346,7 @@ mod nested_routing_integration {
         );
 
         // Navigate back up
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         // Should be at root after popping
         assert_eq!(cx.read(Navigator::current_path), "/");
     }
@@ -355,7 +358,7 @@ mod nested_routing_integration {
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::component("/", || HomePage));
-                router.add_route(Route::component("/login", || StatefulForm::new()));
+                router.add_route(Route::component("/login", StatefulForm::new));
                 router.add_route(Route::component("/dashboard", || DashboardLayout));
             });
         });
@@ -369,7 +372,7 @@ mod nested_routing_integration {
         assert_eq!(cx.read(Navigator::current_path), "/dashboard");
 
         // Pop should go to home, not login
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/");
         assert!(!cx.read(Navigator::can_pop));
     }
@@ -392,17 +395,17 @@ mod nested_routing_integration {
         assert_eq!(cx.read(Navigator::current_path), "/page2");
 
         // Go back twice
-        cx.update(|cx| Navigator::pop(cx));
-        cx.update(|cx| Navigator::pop(cx));
+        cx.update(Navigator::pop);
+        cx.update(Navigator::pop);
         assert_eq!(cx.read(Navigator::current_path), "/");
 
         // Should be able to go forward
         assert!(cx.read(Navigator::can_go_forward));
 
-        cx.update(|cx| Navigator::forward(cx));
+        cx.update(Navigator::forward);
         assert_eq!(cx.read(Navigator::current_path), "/page1");
 
-        cx.update(|cx| Navigator::forward(cx));
+        cx.update(Navigator::forward);
         assert_eq!(cx.read(Navigator::current_path), "/page2");
 
         // No more forward
@@ -418,7 +421,7 @@ mod nested_routing_integration {
                 router.add_route(Route::component("/dashboard", || DashboardLayout).children(
                     vec![
                         Route::component("", || TestComponent).into(), // Index route
-                        Route::component("settings", || StatefulForm::new()).into(),
+                        Route::component("settings", StatefulForm::new).into(),
                     ],
                 ));
             });
@@ -438,7 +441,7 @@ mod nested_routing_integration {
                 router.add_route(Route::component("/", || HomePage).name("home"));
                 router.add_route(
                     Route::component_with_params("/user/:id", |params| {
-                        let id = params.get("id").unwrap_or(&"0".to_string()).clone();
+                        let id = params.get("id").cloned().unwrap_or_else(|| "0".to_string());
                         UserProfile::new(id)
                     })
                     .name("user-profile"),
@@ -467,8 +470,11 @@ mod nested_routing_integration {
             init_router(cx, |router| {
                 router.add_route(
                     Route::component_with_params("/user/:id/posts/:postId", |params| {
-                        let user_id = params.get("id").unwrap_or(&"0".to_string()).clone();
-                        let post_id = params.get("postId").unwrap_or(&"0".to_string()).clone();
+                        let user_id = params.get("id").cloned().unwrap_or_else(|| "0".to_string());
+                        let post_id = params
+                            .get("postId")
+                            .cloned()
+                            .unwrap_or_else(|| "0".to_string());
                         PostView::new(user_id, post_id)
                     })
                     .name("user-post"),
@@ -699,23 +705,27 @@ mod nested_routing_integration {
                         Route::component_with_params("workspace/:workspaceId", |params| {
                             let ws_id = params
                                 .get("workspaceId")
-                                .unwrap_or(&"0".to_string())
-                                .clone();
+                                .cloned()
+                                .unwrap_or_else(|| "0".to_string());
                             WorkspaceLayoutTest::new(ws_id)
                         })
                         .children(vec![Route::component_with_params(
                             "project/:projectId",
                             |params| {
-                                let proj_id =
-                                    params.get("projectId").unwrap_or(&"0".to_string()).clone();
+                                let proj_id = params
+                                    .get("projectId")
+                                    .cloned()
+                                    .unwrap_or_else(|| "0".to_string());
                                 ProjectLayoutTest::new(proj_id)
                             },
                         )
                         .children(vec![Route::component_with_params(
                             "task/:taskId",
                             |params| {
-                                let task_id =
-                                    params.get("taskId").unwrap_or(&"0".to_string()).clone();
+                                let task_id = params
+                                    .get("taskId")
+                                    .cloned()
+                                    .unwrap_or_else(|| "0".to_string());
                                 TaskPageTest::new(task_id)
                             },
                         )
@@ -749,23 +759,27 @@ mod nested_routing_integration {
                         Route::component_with_params("workspace/:workspaceId", |params| {
                             let ws_id = params
                                 .get("workspaceId")
-                                .unwrap_or(&"0".to_string())
-                                .clone();
+                                .cloned()
+                                .unwrap_or_else(|| "0".to_string());
                             WorkspaceLayoutTest::new(ws_id)
                         })
                         .children(vec![Route::component_with_params(
                             "project/:projectId",
                             |params| {
-                                let proj_id =
-                                    params.get("projectId").unwrap_or(&"0".to_string()).clone();
+                                let proj_id = params
+                                    .get("projectId")
+                                    .cloned()
+                                    .unwrap_or_else(|| "0".to_string());
                                 ProjectLayoutTest::new(proj_id)
                             },
                         )
                         .children(vec![Route::component_with_params(
                             "task/:taskId",
                             |params| {
-                                let task_id =
-                                    params.get("taskId").unwrap_or(&"0".to_string()).clone();
+                                let task_id = params
+                                    .get("taskId")
+                                    .cloned()
+                                    .unwrap_or_else(|| "0".to_string());
                                 TaskPageTest::new(task_id)
                             },
                         )
@@ -800,30 +814,34 @@ mod nested_routing_integration {
                 router.add_route(Route::component("/", || HomePage));
                 router.add_route(Route::component("/page1", || TestComponent));
                 router.add_route(Route::component("/page2", || StatefulCounter::new(0)));
-                router.add_route(Route::component("/page3", || StatefulForm::new()));
+                router.add_route(Route::component("/page3", StatefulForm::new));
 
                 // Add 4-level hierarchy for stress testing
                 router.add_route(Route::component("/app", || AppLayoutTest).children(vec![
                         Route::component_with_params("workspace/:workspaceId", |params| {
                             let ws_id = params
                                 .get("workspaceId")
-                                .unwrap_or(&"0".to_string())
-                                .clone();
+                                .cloned()
+                                .unwrap_or_else(|| "0".to_string());
                             WorkspaceLayoutTest::new(ws_id)
                         })
                         .children(vec![Route::component_with_params(
                             "project/:projectId",
                             |params| {
-                                let proj_id =
-                                    params.get("projectId").unwrap_or(&"0".to_string()).clone();
+                                let proj_id = params
+                                    .get("projectId")
+                                    .cloned()
+                                    .unwrap_or_else(|| "0".to_string());
                                 ProjectLayoutTest::new(proj_id)
                             },
                         )
                         .children(vec![Route::component_with_params(
                             "task/:taskId",
                             |params| {
-                                let task_id =
-                                    params.get("taskId").unwrap_or(&"0".to_string()).clone();
+                                let task_id = params
+                                    .get("taskId")
+                                    .cloned()
+                                    .unwrap_or_else(|| "0".to_string());
                                 TaskPageTest::new(task_id)
                             },
                         )
@@ -850,7 +868,7 @@ mod nested_routing_integration {
 
         let start = Instant::now();
         for path in &paths {
-            cx.update(|cx| Navigator::push(cx, path.to_string()));
+            cx.update(|cx| Navigator::push(cx, (*path).to_string()));
             // Small delay to simulate real usage (10 navigations/second = 100ms each)
             std::thread::sleep(Duration::from_millis(10));
         }

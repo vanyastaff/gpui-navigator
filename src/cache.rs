@@ -268,7 +268,7 @@ mod tests {
     fn test_parent_cache_hit() {
         let mut cache = RouteCache::new();
         let route_id = RouteId::from_path("/dashboard");
-        cache.set_parent("/dashboard/analytics".to_string(), route_id.clone());
+        cache.set_parent("/dashboard/analytics".to_string(), route_id);
 
         let result = cache.get_parent("/dashboard/analytics");
         assert!(result.is_some());

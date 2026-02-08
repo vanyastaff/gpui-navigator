@@ -109,8 +109,9 @@
 //! | `log`        | yes     | Logging via the `log` crate |
 //! | `tracing`    | no      | Logging via `tracing` (mutually exclusive with `log`) |
 
-#![doc(html_root_url = "https://docs.rs/gpui_navigator/0.1.0")]
+#![doc(html_root_url = "https://docs.rs/gpui_navigator/0.1.4")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
 // Lints are configured in Cargo.toml [lints] section
 
 // Logging abstraction

@@ -40,13 +40,21 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum NavigationResult {
-    /// Navigation succeeded
-    Success { path: String },
-    /// Route not found
-    NotFound { path: String },
-    /// Navigation blocked by guard
+    /// Navigation succeeded.
+    Success {
+        /// The path that was navigated to.
+        path: String,
+    },
+    /// Route not found.
+    NotFound {
+        /// The path that could not be matched.
+        path: String,
+    },
+    /// Navigation blocked by a guard.
     Blocked {
+        /// Human-readable reason the navigation was blocked.
         reason: String,
+        /// Optional redirect path suggested by the guard.
         redirect: Option<String>,
     },
     /// Navigation error
@@ -60,20 +68,35 @@ pub enum NavigationResult {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum NavigationError {
-    /// Route not found
-    RouteNotFound { path: String },
+    /// Route not found.
+    RouteNotFound {
+        /// The path that could not be resolved.
+        path: String,
+    },
 
-    /// Guard blocked navigation
-    GuardBlocked { reason: String },
+    /// Guard blocked navigation.
+    GuardBlocked {
+        /// Reason the guard denied access.
+        reason: String,
+    },
 
-    /// Invalid route parameters
-    InvalidParams { message: String },
+    /// Invalid route parameters.
+    InvalidParams {
+        /// Description of the parameter error.
+        message: String,
+    },
 
-    /// Navigation failed
-    NavigationFailed { message: String },
+    /// Navigation failed.
+    NavigationFailed {
+        /// Description of the failure.
+        message: String,
+    },
 
-    /// Custom error
-    Custom { message: String },
+    /// Custom application-specific error.
+    Custom {
+        /// Error message.
+        message: String,
+    },
 }
 
 impl fmt::Display for NavigationError {
@@ -265,7 +288,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_on_not_found(cx: &mut TestAppContext) {
+    fn test_on_not_found(cx: &mut TestAppContext) {
         let handlers = ErrorHandlers::new()
             .on_not_found(|_cx, path| div().child(format!("404: {}", path)).into_any_element());
 
@@ -276,7 +299,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_on_error(cx: &mut TestAppContext) {
+    fn test_on_error(cx: &mut TestAppContext) {
         let handlers = ErrorHandlers::new()
             .on_error(|_cx, error| div().child(format!("Error: {}", error)).into_any_element());
 

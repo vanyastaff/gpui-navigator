@@ -104,7 +104,7 @@ impl NamedRouteRegistry {
 
     /// Get path pattern for a named route
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.routes.get(name).map(|s| s.as_str())
+        self.routes.get(name).map(String::as_str)
     }
 
     /// Check if a route name exists
@@ -824,7 +824,7 @@ impl Route {
     ///
     /// Returns None if the outlet doesn't exist
     pub fn get_named_children(&self, name: &str) -> Option<&[RouteRef]> {
-        self.named_children.get(name).map(|v| v.as_slice())
+        self.named_children.get(name).map(Vec::as_slice)
     }
 
     /// Check if this route has a named outlet
@@ -834,7 +834,7 @@ impl Route {
 
     /// Get all named outlet names
     pub fn named_outlet_names(&self) -> Vec<&str> {
-        self.named_children.keys().map(|s| s.as_str()).collect()
+        self.named_children.keys().map(String::as_str).collect()
     }
 
     /// Match a path against this route

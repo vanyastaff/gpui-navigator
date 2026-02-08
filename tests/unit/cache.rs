@@ -16,7 +16,7 @@ mod cache_tests {
 
         // Insert parent route mapping
         let parent_id = RouteId::from_path("/dashboard");
-        cache.set_parent("/dashboard/analytics".to_string(), parent_id.clone());
+        cache.set_parent("/dashboard/analytics".to_string(), parent_id);
 
         // Should have one entry
         assert_eq!(cache.parent_cache_size(), 1);

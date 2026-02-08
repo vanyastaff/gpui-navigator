@@ -3,6 +3,8 @@
 //! These tests verify the complete router workflow including initialization,
 //! navigation, guards, and route matching.
 
+#![allow(clippy::future_not_send, clippy::unused_async)]
+
 use gpui::{div, IntoElement, ParentElement, TestAppContext};
 use gpui_navigator::*;
 
@@ -88,7 +90,7 @@ async fn test_pop_navigation(cx: &mut TestAppContext) {
     cx.update(|cx| Navigator::push(cx, "/page1"));
     assert_eq!(cx.read(Navigator::current_path), "/page1");
 
-    cx.update(|cx| Navigator::pop(cx));
+    cx.update(Navigator::pop);
     assert_eq!(cx.read(Navigator::current_path), "/");
 
     // Can't pop past initial route
@@ -112,7 +114,7 @@ async fn test_replace_navigation(cx: &mut TestAppContext) {
     assert_eq!(cx.read(Navigator::current_path), "/dashboard");
 
     // Pop should go back to home, not login
-    cx.update(|cx| Navigator::pop(cx));
+    cx.update(Navigator::pop);
     assert_eq!(cx.read(Navigator::current_path), "/");
 }
 
@@ -126,12 +128,12 @@ async fn test_forward_navigation(cx: &mut TestAppContext) {
     });
 
     cx.update(|cx| Navigator::push(cx, "/page1"));
-    cx.update(|cx| Navigator::pop(cx));
+    cx.update(Navigator::pop);
 
     // Should be able to go forward
     assert!(cx.read(Navigator::can_go_forward));
 
-    cx.update(|cx| Navigator::forward(cx));
+    cx.update(Navigator::forward);
     assert_eq!(cx.read(Navigator::current_path), "/page1");
 }
 
@@ -603,14 +605,14 @@ async fn test_full_navigation_flow(cx: &mut TestAppContext) {
     assert_eq!(cx.read(Navigator::current_path), "/users/42");
 
     // Go back twice
-    cx.update(|cx| Navigator::pop(cx));
+    cx.update(Navigator::pop);
     assert_eq!(cx.read(Navigator::current_path), "/users");
 
-    cx.update(|cx| Navigator::pop(cx));
+    cx.update(Navigator::pop);
     assert_eq!(cx.read(Navigator::current_path), "/");
 
     // Go forward
-    cx.update(|cx| Navigator::forward(cx));
+    cx.update(Navigator::forward);
     assert_eq!(cx.read(Navigator::current_path), "/users");
 
     // Navigate by name

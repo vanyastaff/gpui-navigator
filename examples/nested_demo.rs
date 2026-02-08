@@ -53,7 +53,8 @@ fn main() {
                             .name("products.list")
                             .into(),
                         Route::component_with_params(":id", |params| {
-                            let id = params.get("id").unwrap_or(&"unknown".to_string()).clone();
+                            let unknown = "unknown".to_string();
+                            let id = params.get("id").unwrap_or(&unknown).clone();
                             ProductDetailPage::new(id)
                         })
                         .name("products.detail")
@@ -126,6 +127,7 @@ impl Render for NestedDemoApp {
 }
 
 impl NestedDemoApp {
+    #[allow(clippy::unused_self)]
     fn nav_button(&self, cx: &mut Context<'_, Self>, path: &str, label: &str) -> impl IntoElement {
         let path = path.to_string();
         let label = label.to_string();
@@ -240,11 +242,12 @@ impl Render for DashboardLayout {
                     .child(self.sidebar_link(cx, "/dashboard/settings", "Settings")),
             )
             // Child routes render here
-            .child(div().flex_1().p_8().child(outlet.clone()))
+            .child(div().flex_1().p_8().child(outlet))
     }
 }
 
 impl DashboardLayout {
+    #[allow(clippy::unused_self)]
     fn sidebar_link(
         &self,
         cx: &mut Context<'_, Self>,
@@ -386,7 +389,7 @@ impl Render for ProductsLayout {
             .p_8()
             .child(div().text_2xl().mb_4().child("Products"))
             // Child routes render here
-            .child(div().flex_1().child(outlet.clone()))
+            .child(div().flex_1().child(outlet))
     }
 }
 
@@ -424,6 +427,7 @@ impl Render for ProductListPage {
 }
 
 impl ProductListPage {
+    #[allow(clippy::unused_self)]
     fn product_link(&self, cx: &mut Context<'_, Self>, id: &str, name: &str) -> impl IntoElement {
         let path = format!("/products/{}", id);
         let name = name.to_string();

@@ -174,11 +174,9 @@ pub fn router_outlet<V>(
     cx: &mut Context<'_, V>,
     key: impl Into<String>,
 ) -> impl IntoElement {
-    window
-        .use_keyed_state(ElementId::Name(key.into().into()), cx, |_, _| {
-            RouterOutlet::new()
-        })
-        .clone()
+    window.use_keyed_state(ElementId::Name(key.into().into()), cx, |_, _| {
+        RouterOutlet::new()
+    })
 }
 
 /// Create a cached named RouterOutlet
@@ -188,11 +186,9 @@ pub fn router_outlet_named<V>(
     key: impl Into<String>,
     name: impl Into<String>,
 ) -> impl IntoElement {
-    window
-        .use_keyed_state(ElementId::Name(key.into().into()), cx, move |_, _| {
-            RouterOutlet::named(name)
-        })
-        .clone()
+    window.use_keyed_state(ElementId::Name(key.into().into()), cx, move |_, _| {
+        RouterOutlet::named(name)
+    })
 }
 
 impl Render for RouterOutlet {
@@ -618,6 +614,7 @@ impl Default for RouterView {
 }
 
 impl RouterView {
+    /// Create a new `RouterView`.
     pub fn new() -> Self {
         Self
     }

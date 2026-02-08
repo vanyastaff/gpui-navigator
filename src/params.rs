@@ -194,7 +194,7 @@ impl RouteParams {
                 } else {
                     param_name
                 };
-                params.insert(param_name.to_string(), path_seg.to_string());
+                params.insert(param_name.to_string(), (*path_seg).to_string());
             } else if pattern_seg != path_seg {
                 // Static segment mismatch - no match
                 return RouteParams::new();

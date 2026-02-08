@@ -89,6 +89,7 @@ impl Render for StatefulDemoApp {
 }
 
 impl StatefulDemoApp {
+    #[allow(clippy::unused_self)]
     fn nav_button(&self, cx: &mut Context<'_, Self>, path: &str, label: &str) -> impl IntoElement {
         let path = path.to_string();
         let label = label.to_string();
@@ -233,6 +234,7 @@ impl Render for CounterPage {
 }
 
 impl CounterPage {
+    #[allow(clippy::unused_self)]
     fn button<F>(&self, cx: &mut Context<'_, Self>, label: &str, on_click: F) -> impl IntoElement
     where
         F: Fn(&mut Self, &mut Context<'_, Self>) + 'static,
@@ -360,6 +362,7 @@ impl Render for FormPage {
 }
 
 impl FormPage {
+    #[allow(clippy::unused_self)]
     fn button<F>(&self, cx: &mut Context<'_, Self>, label: &str, on_click: F) -> impl IntoElement
     where
         F: Fn(&mut Self, &mut Context<'_, Self>) + 'static,
