@@ -66,6 +66,7 @@ pub struct RouterState {
 
 impl RouterState {
     /// Create a new router state with the initial path set to `"/"`.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             history: vec!["/".to_string()],
@@ -81,6 +82,7 @@ impl RouterState {
     ///
     /// The value is monotonically increasing and is shared across clones of
     /// this state (via `Arc<AtomicUsize>`).
+    #[must_use] 
     pub fn navigation_id(&self) -> usize {
         self.navigation_id.load(Ordering::SeqCst)
     }
@@ -89,11 +91,13 @@ impl RouterState {
     ///
     /// This increments the navigation counter, allowing previous navigations
     /// to detect they've been superseded and should be cancelled.
+    #[must_use] 
     pub fn start_navigation(&self) -> usize {
         self.navigation_id.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     /// Check if a navigation is still current (not cancelled by newer navigation)
+    #[must_use] 
     pub fn is_navigation_current(&self, nav_id: usize) -> bool {
         self.navigation_id() == nav_id
     }
@@ -116,11 +120,13 @@ impl RouterState {
     }
 
     /// Return a slice of all registered routes (in registration order).
+    #[must_use] 
     pub fn routes(&self) -> &[Arc<Route>] {
         &self.routes
     }
 
     /// Return the current route parameters (used for parameter inheritance in nested routing).
+    #[must_use] 
     pub const fn current_params(&self) -> &RouteParams {
         &self.current_params
     }
@@ -158,6 +164,7 @@ impl RouterState {
     ///
     /// Use this when you need to access the current route from a non-mutable context,
     /// such as in a GPUI Render implementation.
+    #[must_use] 
     pub fn current_match_immutable(&self) -> Option<RouteMatch> {
         let path = self.current_path();
 
@@ -181,6 +188,7 @@ impl RouterState {
     /// With `MatchStack` architecture, rendering uses `GlobalRouter::match_stack()`.
     /// This method is kept for compatibility — it returns the first registered
     /// route whose pattern matches the current path (exact or prefix).
+    #[must_use] 
     pub fn current_route(&self) -> Option<&Arc<Route>> {
         let path = self.current_path();
         for route in &self.routes {
@@ -312,16 +320,19 @@ impl RouterState {
     }
 
     /// Return `true` if [`back`](Self::back) would succeed.
+    #[must_use] 
     pub const fn can_go_back(&self) -> bool {
         self.current > 0
     }
 
     /// Return `true` if [`forward`](Self::forward) would succeed.
+    #[must_use] 
     pub fn can_go_forward(&self) -> bool {
         self.current < self.history.len() - 1
     }
 
     /// Peek at the path we would navigate to on `back()`, without actually navigating.
+    #[must_use] 
     pub fn peek_back_path(&self) -> Option<&str> {
         if self.current > 0 {
             Some(&self.history[self.current - 1])
@@ -331,6 +342,7 @@ impl RouterState {
     }
 
     /// Peek at the path we would navigate to on `forward()`, without actually navigating.
+    #[must_use] 
     pub fn peek_forward_path(&self) -> Option<&str> {
         if self.current < self.history.len() - 1 {
             Some(&self.history[self.current + 1])

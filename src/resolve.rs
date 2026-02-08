@@ -150,6 +150,7 @@ pub fn reset_outlet_depth() {
 }
 
 /// Get current outlet depth without modifying state. Used by named outlets.
+#[must_use] 
 pub fn current_outlet_depth() -> usize {
     PARENT_DEPTH.with(|p| p.get().map_or(0, |d| d + 1))
 }
@@ -187,6 +188,7 @@ pub struct MatchStack {
 
 impl MatchStack {
     /// Create an empty match stack.
+    #[must_use] 
     pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -194,31 +196,37 @@ impl MatchStack {
     }
 
     /// Return the entry at `depth`, or `None` if out of range.
+    #[must_use] 
     pub fn at_depth(&self, depth: usize) -> Option<&MatchEntry> {
         self.entries.get(depth)
     }
 
     /// Return the root (depth 0) entry, or `None` if the stack is empty.
+    #[must_use] 
     pub fn root(&self) -> Option<&MatchEntry> {
         self.entries.first()
     }
 
     /// Return the leaf (deepest) entry, or `None` if the stack is empty.
+    #[must_use] 
     pub fn leaf(&self) -> Option<&MatchEntry> {
         self.entries.last()
     }
 
     /// Return the total number of matched levels in the stack.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Return `true` if no routes matched the path.
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Return the maximum depth (0-indexed), or `None` if the stack is empty.
+    #[must_use] 
     pub fn max_depth(&self) -> Option<usize> {
         if self.entries.is_empty() {
             None
@@ -228,22 +236,26 @@ impl MatchStack {
     }
 
     /// Return all entries as a slice (ordered root → leaf).
+    #[must_use] 
     pub fn entries(&self) -> &[MatchEntry] {
         &self.entries
     }
 
     /// Return the accumulated params at the deepest matched level.
+    #[must_use] 
     pub fn params(&self) -> RouteParams {
         self.leaf().map(|e| e.params.clone()).unwrap_or_default()
     }
 
     /// Return `true` if the stack contains an entry at the given `depth`.
+    #[must_use] 
     pub fn has_depth(&self, depth: usize) -> bool {
         depth < self.entries.len()
     }
 
     /// Return a multi-line human-readable representation (debug builds only).
     #[cfg(debug_assertions)]
+    #[must_use] 
     pub fn debug_string(&self) -> String {
         if self.entries.is_empty() {
             return "MatchStack: (empty)".to_string();
@@ -302,6 +314,7 @@ const MAX_DEPTH: usize = 16;
 /// let stack = resolve_match_stack(&routes, "/dashboard/settings/profile");
 /// assert_eq!(stack.len(), 4); // root, dashboard, settings, profile
 /// ```
+#[must_use] 
 pub fn resolve_match_stack(routes: &[Arc<Route>], path: &str) -> MatchStack {
     let normalized = normalize_path(path);
     let path_str = normalized.trim_start_matches('/').trim_end_matches('/');
@@ -562,6 +575,7 @@ fn try_index_route(
 /// on demand by the named outlet during rendering.
 ///
 /// Returns the first matching child from the named outlet's children.
+#[must_use] 
 pub fn resolve_named_outlet(
     match_stack: &MatchStack,
     outlet_depth: usize,

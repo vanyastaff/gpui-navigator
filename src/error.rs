@@ -125,26 +125,31 @@ impl std::error::Error for NavigationError {}
 
 impl NavigationResult {
     /// Check if navigation was successful
+    #[must_use] 
     pub const fn is_success(&self) -> bool {
         matches!(self, Self::Success { .. })
     }
 
     /// Check if route was not found
+    #[must_use] 
     pub const fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound { .. })
     }
 
     /// Check if navigation was blocked
+    #[must_use] 
     pub const fn is_blocked(&self) -> bool {
         matches!(self, Self::Blocked { .. })
     }
 
     /// Check if there was an error
+    #[must_use] 
     pub const fn is_error(&self) -> bool {
         matches!(self, Self::Error(_))
     }
 
     /// Get redirect path if blocked with redirect
+    #[must_use] 
     pub fn redirect_path(&self) -> Option<&str> {
         match self {
             Self::Blocked {

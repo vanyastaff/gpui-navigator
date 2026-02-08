@@ -42,11 +42,13 @@ pub struct HistoryEntry {
 
 impl HistoryEntry {
     /// Create a new history entry
+    #[must_use] 
     pub const fn new(path: String) -> Self {
         Self { path, state: None }
     }
 
     /// Create with state
+    #[must_use] 
     pub const fn with_state(path: String, state: HistoryState) -> Self {
         Self {
             path,
@@ -67,6 +69,7 @@ pub struct HistoryState {
 
 impl HistoryState {
     /// Create new empty state
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             data: std::collections::HashMap::new(),
@@ -79,6 +82,7 @@ impl HistoryState {
     }
 
     /// Get a value
+    #[must_use] 
     pub fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
     }
@@ -106,6 +110,7 @@ pub struct History {
 
 impl History {
     /// Create a new history with the given initial path and a default limit of 1000 entries.
+    #[must_use] 
     pub fn new(initial_path: String) -> Self {
         Self {
             entries: vec![HistoryEntry::new(initial_path)],
@@ -115,6 +120,7 @@ impl History {
     }
 
     /// Create a new history with a custom maximum size (`0` = unlimited).
+    #[must_use] 
     pub fn with_max_size(initial_path: String, max_size: usize) -> Self {
         Self {
             entries: vec![HistoryEntry::new(initial_path)],
@@ -124,11 +130,13 @@ impl History {
     }
 
     /// Return the path of the current (cursor) entry.
+    #[must_use] 
     pub fn current_path(&self) -> &str {
         &self.entries[self.current].path
     }
 
     /// Return a reference to the current [`HistoryEntry`] (path + optional state).
+    #[must_use] 
     pub fn current_entry(&self) -> &HistoryEntry {
         &self.entries[self.current]
     }
@@ -238,11 +246,13 @@ impl History {
     }
 
     /// Return `true` if [`back`](Self::back) would succeed.
+    #[must_use] 
     pub const fn can_go_back(&self) -> bool {
         self.current > 0
     }
 
     /// Return `true` if [`forward`](Self::forward) would succeed.
+    #[must_use] 
     pub fn can_go_forward(&self) -> bool {
         self.current < self.entries.len() - 1
     }
@@ -255,21 +265,25 @@ impl History {
     }
 
     /// Return the total number of entries in the stack.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if history is empty (should never be true in practice)
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Return a slice of all entries (useful for serialization / persistence).
+    #[must_use] 
     pub fn entries(&self) -> &[HistoryEntry] {
         &self.entries
     }
 
     /// Return the current cursor position in the stack.
+    #[must_use] 
     pub const fn current_index(&self) -> usize {
         self.current
     }

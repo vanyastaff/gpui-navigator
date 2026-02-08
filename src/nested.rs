@@ -68,6 +68,7 @@ pub type ResolvedChildRoute = (Arc<Route>, RouteParams);
 /// assert_eq!(normalize_path("/"), "/");
 /// assert_eq!(normalize_path(""), "/");
 /// ```
+#[must_use] 
 pub fn normalize_path(path: &'_ str) -> Cow<'_, str> {
     // Handle empty path -> "/"
     if path.is_empty() {
@@ -110,6 +111,7 @@ pub fn normalize_path(path: &'_ str) -> Cow<'_, str> {
 /// assert_eq!(extract_param_name(":id<i32>"), "id");
 /// assert_eq!(extract_param_name(":user_id<uuid>"), "user_id");
 /// ```
+#[must_use] 
 pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
     let without_colon = segment.trim_start_matches(':');
 
@@ -124,6 +126,7 @@ pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
 ///
 /// Public wrapper that starts recursion depth tracking at 0.
 /// Use this function for all external calls.
+#[must_use] 
 pub fn resolve_child_route(
     parent_route: &Arc<Route>,
     current_path: &str,
@@ -415,6 +418,7 @@ fn find_index_route(children: &[Arc<Route>], params: RouteParams) -> Option<Reso
 /// let full_path = build_child_path("/dashboard", "settings");
 /// assert_eq!(full_path, "/dashboard/settings");
 /// ```
+#[must_use] 
 pub fn build_child_path<'a>(parent_path: &'a str, child_path: &'a str) -> Cow<'a, str> {
     // CRITICAL: Don't normalize empty child paths - they represent index routes
     // Normalizing "" to "/" would make the child have the same path as parent, causing infinite recursion

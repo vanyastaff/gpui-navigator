@@ -96,6 +96,7 @@ impl Clone for RouterOutlet {
 
 impl RouterOutlet {
     /// Create a new default outlet
+    #[must_use] 
     pub const fn new() -> Self {
         Self {
             name: None,
@@ -616,6 +617,7 @@ impl Default for RouterView {
 
 impl RouterView {
     /// Create a new `RouterView`.
+    #[must_use] 
     pub const fn new() -> Self {
         Self
     }
@@ -688,7 +690,7 @@ use crate::Navigator;
 /// ```ignore
 /// RouterLink::new("/settings")
 ///     .child("Settings")
-///     .active_class(|div| div.text_color(gpui::rgb(0x2196f3)))
+///     .active_class(|div| div.text_color(gpui::rgb(0x21_96_f3)))
 ///     .build(cx)
 /// ```
 #[must_use]
@@ -766,11 +768,11 @@ pub fn router_link<V: 'static>(
     div()
         .cursor_pointer()
         .text_color(if is_active {
-            rgb(0x2196f3)
+            rgb(0x21_96_f3)
         } else {
-            rgb(0x333333)
+            rgb(0x33_33_33)
         })
-        .hover(|this| this.text_color(rgb(0x2196f3)))
+        .hover(|this| this.text_color(rgb(0x21_96_f3)))
         .child(label_str)
         .on_mouse_down(
             MouseButton::Left,
@@ -844,6 +846,7 @@ impl DefaultPages {
     }
 
     /// Render 404 not found page (custom or default)
+    #[must_use] 
     pub fn render_not_found(&self) -> AnyElement {
         self.not_found
             .as_ref()
@@ -851,6 +854,7 @@ impl DefaultPages {
     }
 
     /// Render loading page (custom or default)
+    #[must_use] 
     pub fn render_loading(&self) -> AnyElement {
         self.loading
             .as_ref()
@@ -858,6 +862,7 @@ impl DefaultPages {
     }
 
     /// Render error page (custom or default)
+    #[must_use] 
     pub fn render_error(&self, message: &str) -> AnyElement {
         self.error.as_ref().map_or_else(
             || default_error_page(message).into_any_element(),
@@ -884,20 +889,20 @@ fn default_not_found_page(path: &str) -> impl IntoElement {
         .items_center()
         .justify_center()
         .size_full()
-        .bg(rgb(0x1e1e1e))
+        .bg(rgb(0x1e_1e_1e))
         .p_8()
         .gap_6()
         .child(
             div()
                 .text_3xl()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child("404 — Page Not Found"),
         )
         .child(
             div()
                 .text_base()
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .child(format!("No route matches: {path}")),
         )
 }
@@ -910,19 +915,19 @@ fn default_loading_page() -> impl IntoElement {
         .items_center()
         .justify_center()
         .size_full()
-        .bg(rgb(0x1e1e1e))
+        .bg(rgb(0x1e_1e_1e))
         .gap_4()
         .child(
             div()
                 .text_xl()
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child("Loading..."),
         )
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0x888888))
+                .text_color(rgb(0x88_88_88))
                 .child("Please wait"),
         )
 }
@@ -935,20 +940,20 @@ fn default_error_page(message: &str) -> impl IntoElement {
         .items_center()
         .justify_center()
         .size_full()
-        .bg(rgb(0x1e1e1e))
+        .bg(rgb(0x1e_1e_1e))
         .p_8()
         .gap_6()
         .child(
             div()
                 .text_2xl()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child("Something Went Wrong"),
         )
         .child(
             div()
                 .text_base()
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .text_center()
                 .max_w(px(500.))
                 .line_height(relative(1.6))

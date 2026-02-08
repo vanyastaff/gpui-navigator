@@ -70,7 +70,7 @@ impl Render for DemoApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x1e1e1e))
+            .bg(rgb(0x1e_1e_1e))
             .child(header(cx))
             .child(
                 div()
@@ -88,25 +88,25 @@ fn header(cx: &mut Context<'_, DemoApp>) -> impl IntoElement {
         .items_center()
         .justify_between()
         .p_4()
-        .bg(rgb(0x2d2d2d))
+        .bg(rgb(0x2d_2d_2d))
         .border_b_1()
-        .border_color(rgb(0x3e3e3e))
+        .border_color(rgb(0x3e_3e_3e))
         .child(
             div()
                 .text_xl()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child("RouterLink Demo"),
         )
         .child(
             div()
                 .flex()
                 .gap_2()
-                .child(div().text_sm().text_color(rgb(0x888888)).child("Path:"))
+                .child(div().text_sm().text_color(rgb(0x88_88_88)).child("Path:"))
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x4ec9b0))
+                        .text_color(rgb(0x4e_c9_b0))
                         .child(Navigator::current_path(cx)),
                 ),
         )
@@ -117,28 +117,28 @@ fn sidebar(cx: &mut Context<'_, DemoApp>) -> impl IntoElement {
         .flex()
         .flex_col()
         .w_64()
-        .bg(rgb(0x252526))
+        .bg(rgb(0x25_25_26))
         .border_r_1()
-        .border_color(rgb(0x3e3e3e))
+        .border_color(rgb(0x3e_3e_3e))
         .p_4()
         .gap_2()
         .child(
             div()
                 .text_sm()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .mb_2()
                 .child("Valid Routes"),
         )
         .child(nav_link(cx, "/", "Home"))
         .child(nav_link(cx, "/about", "About"))
         .child(nav_link(cx, "/users/42", "User #42"))
-        .child(div().h_px().bg(rgb(0x3e3e3e)).my_2())
+        .child(div().h_px().bg(rgb(0x3e_3e_3e)).my_2())
         .child(
             div()
                 .text_sm()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .mb_2()
                 .child("Invalid Routes"),
         )
@@ -156,10 +156,10 @@ fn nav_link(cx: &mut Context<'_, DemoApp>, path: &str, label: &str) -> Div {
                 .text_sm()
                 .child(label.to_string()),
         )
-        .active_class(|div| div.bg(rgb(0x094771)).text_color(rgb(0xffffff)))
+        .active_class(|div| div.bg(rgb(0x09_47_71)).text_color(rgb(0xff_ff_ff)))
         .build(cx)
-        .text_color(rgb(0xcccccc))
-        .hover(|this| this.bg(rgb(0x2a2d2e)))
+        .text_color(rgb(0xcc_cc_cc))
+        .hover(|this| this.bg(rgb(0x2a_2d_2e)))
 }
 
 fn home_page() -> impl IntoElement {
@@ -179,11 +179,11 @@ fn home_page() -> impl IntoElement {
                 .w(px(120.))
                 .h(px(120.))
                 .rounded(px(20.))
-                .bg(rgb(0x2196f3))
+                .bg(rgb(0x21_96_f3))
                 .shadow_lg()
                 .child(
                     div()
-                        .text_color(rgb(0xffffff))
+                        .text_color(rgb(0xff_ff_ff))
                         .text_size(px(48.))
                         .child("🏠"),
                 ),
@@ -192,13 +192,13 @@ fn home_page() -> impl IntoElement {
             div()
                 .text_3xl()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child("Welcome Home"),
         )
         .child(
             div()
                 .text_base()
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .text_center()
                 .max_w(px(500.))
                 .line_height(relative(1.6))
@@ -208,10 +208,10 @@ fn home_page() -> impl IntoElement {
             div()
                 .mt_4()
                 .p_6()
-                .bg(rgb(0x252526))
+                .bg(rgb(0x25_25_26))
                 .rounded(px(12.))
                 .border_1()
-                .border_color(rgb(0x3e3e3e))
+                .border_color(rgb(0x3e_3e_3e))
                 .max_w(px(600.))
                 .child(
                     div()
@@ -243,11 +243,11 @@ fn about_page() -> impl IntoElement {
                 .w(px(120.))
                 .h(px(120.))
                 .rounded(px(20.))
-                .bg(rgb(0x9c27b0))
+                .bg(rgb(0x9c_27_b0))
                 .shadow_lg()
                 .child(
                     div()
-                        .text_color(rgb(0xffffff))
+                        .text_color(rgb(0xff_ff_ff))
                         .text_size(px(48.))
                         .child("ℹ️"),
                 ),
@@ -256,13 +256,13 @@ fn about_page() -> impl IntoElement {
             div()
                 .text_3xl()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child("About This Demo"),
         )
         .child(
             div()
                 .text_base()
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .text_center()
                 .max_w(px(500.))
                 .line_height(relative(1.6))
@@ -274,10 +274,10 @@ fn about_page() -> impl IntoElement {
             div()
                 .mt_4()
                 .p_6()
-                .bg(rgb(0x252526))
+                .bg(rgb(0x25_25_26))
                 .rounded(px(12.))
                 .border_1()
-                .border_color(rgb(0x3e3e3e))
+                .border_color(rgb(0x3e_3e_3e))
                 .max_w(px(600.))
                 .child(
                     div()
@@ -288,7 +288,7 @@ fn about_page() -> impl IntoElement {
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0x9c27b0))
+                                .text_color(rgb(0x9c_27_b0))
                                 .mb_2()
                                 .child("Features:"),
                         )
@@ -320,11 +320,11 @@ fn user_page(params: &RouteParams) -> impl IntoElement {
                 .w(px(120.))
                 .h(px(120.))
                 .rounded(px(20.))
-                .bg(rgb(0x4caf50))
+                .bg(rgb(0x4c_af_50))
                 .shadow_lg()
                 .child(
                     div()
-                        .text_color(rgb(0xffffff))
+                        .text_color(rgb(0xff_ff_ff))
                         .text_size(px(48.))
                         .child("👤"),
                 ),
@@ -333,13 +333,13 @@ fn user_page(params: &RouteParams) -> impl IntoElement {
             div()
                 .text_3xl()
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
+                .text_color(rgb(0xff_ff_ff))
                 .child(format!("User #{user_id}")),
         )
         .child(
             div()
                 .text_base()
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .text_center()
                 .child("User profile with dynamic route parameter"),
         )
@@ -347,10 +347,10 @@ fn user_page(params: &RouteParams) -> impl IntoElement {
             div()
                 .mt_4()
                 .p_6()
-                .bg(rgb(0x252526))
+                .bg(rgb(0x25_25_26))
                 .rounded(px(12.))
                 .border_1()
-                .border_color(rgb(0x3e3e3e))
+                .border_color(rgb(0x3e_3e_3e))
                 .w_full()
                 .max_w(px(500.))
                 .child(
@@ -362,14 +362,14 @@ fn user_page(params: &RouteParams) -> impl IntoElement {
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0x4caf50))
+                                .text_color(rgb(0x4c_af_50))
                                 .mb_2()
                                 .child("Profile Details:"),
                         )
-                        .child(profile_row("User ID:", &user_id, rgb(0x4ec9b0)))
-                        .child(profile_row("Status:", "Active", rgb(0x6a9955)))
-                        .child(profile_row("Role:", "Developer", rgb(0xdcdcaa)))
-                        .child(profile_row("Member since:", "2024", rgb(0x888888))),
+                        .child(profile_row("User ID:", &user_id, rgb(0x4e_c9_b0)))
+                        .child(profile_row("Status:", "Active", rgb(0x6a_99_55)))
+                        .child(profile_row("Role:", "Developer", rgb(0xdc_dc_aa)))
+                        .child(profile_row("Member since:", "2024", rgb(0x88_88_88))),
                 ),
         )
 }
@@ -381,11 +381,11 @@ fn profile_row(label: &str, value: &str, value_color: Rgba) -> impl IntoElement 
         .items_center()
         .py_2()
         .border_b_1()
-        .border_color(rgb(0x3e3e3e))
+        .border_color(rgb(0x3e_3e_3e))
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0x888888))
+                .text_color(rgb(0x88_88_88))
                 .child(label.to_string()),
         )
         .child(
@@ -406,7 +406,7 @@ fn feature_item(icon: &str, text: &str) -> impl IntoElement {
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0xcccccc))
+                .text_color(rgb(0xcc_cc_cc))
                 .child(text.to_string()),
         )
 }

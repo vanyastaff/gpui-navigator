@@ -51,16 +51,19 @@ pub struct RouteParams {
 impl RouteParams {
     /// Create empty route parameters.
     #[inline]
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create from an existing `HashMap`.
+    #[must_use] 
     pub const fn from_map(params: HashMap<String, String>) -> Self {
         Self { params }
     }
 
     /// Get a parameter value by key.
+    #[must_use] 
     pub fn get(&self, key: &str) -> Option<&String> {
         self.params.get(key)
     }
@@ -68,6 +71,7 @@ impl RouteParams {
     /// Get a parameter and parse it as a specific type
     ///
     /// Returns `None` if the parameter doesn't exist or cannot be parsed.
+    #[must_use] 
     pub fn get_as<T>(&self, key: &str) -> Option<T>
     where
         T: std::str::FromStr,
@@ -86,11 +90,13 @@ impl RouteParams {
     }
 
     /// Return `true` if the given key is present.
+    #[must_use] 
     pub fn contains(&self, key: &str) -> bool {
         self.params.contains_key(key)
     }
 
     /// Get a reference to the underlying parameter map.
+    #[must_use] 
     pub const fn all(&self) -> &HashMap<String, String> {
         &self.params
     }
@@ -106,11 +112,13 @@ impl RouteParams {
     }
 
     /// Return `true` if there are no parameters.
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.params.is_empty()
     }
 
     /// Return the number of parameters.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.params.len()
     }
@@ -138,6 +146,7 @@ impl RouteParams {
     /// assert_eq!(merged.get("projectId"), Some(&"456".to_string()));
     /// assert_eq!(merged.get("view"), Some(&"grid".to_string())); // Child wins
     /// ```
+    #[must_use] 
     pub fn merge(parent: &Self, child: &Self) -> Self {
         let mut merged = parent.clone();
         merged
@@ -172,6 +181,7 @@ impl RouteParams {
     /// let params = RouteParams::from_path("/products/xyz", "/users/:userId");
     /// assert!(params.is_empty());
     /// ```
+    #[must_use] 
     pub fn from_path(path: &str, pattern: &str) -> Self {
         let mut params = Self::new();
 
@@ -316,6 +326,7 @@ pub struct QueryParams {
 impl QueryParams {
     /// Create empty query parameters.
     #[inline]
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -347,6 +358,7 @@ impl QueryParams {
     }
 
     /// Get the first value for a key.
+    #[must_use] 
     pub fn get(&self, key: &str) -> Option<&String> {
         self.params.get(key)?.first()
     }
@@ -354,6 +366,7 @@ impl QueryParams {
     /// Get all values for a key.
     ///
     /// Useful for parameters that can appear multiple times (e.g. `?tag=rust&tag=gpui`).
+    #[must_use] 
     pub fn get_all(&self, key: &str) -> Option<&Vec<String>> {
         self.params.get(key)
     }
@@ -361,6 +374,7 @@ impl QueryParams {
     /// Get the first value for a key, parsed as type `T`.
     ///
     /// Returns `None` if the key is missing or the value cannot be parsed.
+    #[must_use] 
     pub fn get_as<T>(&self, key: &str) -> Option<T>
     where
         T: std::str::FromStr,
@@ -379,6 +393,7 @@ impl QueryParams {
     }
 
     /// Return `true` if the given key is present.
+    #[must_use] 
     pub fn contains(&self, key: &str) -> bool {
         self.params.contains_key(key)
     }
@@ -395,6 +410,7 @@ impl QueryParams {
     /// let s = query.to_query_string();
     /// assert!(s.contains("page=1"));
     /// ```
+    #[must_use] 
     pub fn to_query_string(&self) -> String {
         let pairs: Vec<String> = self
             .params
@@ -414,11 +430,13 @@ impl QueryParams {
     }
 
     /// Return `true` if there are no parameters.
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.params.is_empty()
     }
 
     /// Return the number of unique parameter keys.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.params.len()
     }

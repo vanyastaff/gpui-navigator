@@ -33,14 +33,10 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-# Pedantic lints that are too strict for builder-pattern APIs
-must_use_candidate = "allow"
 # Dependency-related (we can't control gpui's transitive deps)
 multiple_crate_versions = "allow"
 # API compatibility (GPUI requires &mut for context params)
 needless_pass_by_ref_mut = "allow"
-# Hex color literals (0xRRGGBB is standard in UI code)
-unreadable_literal = "allow"
 
 [dependencies]
 gpui = "0.2"

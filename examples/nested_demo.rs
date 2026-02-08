@@ -110,17 +110,17 @@ impl Render for NestedDemoApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x1e1e1e))
-            .text_color(rgb(0xffffff))
+            .bg(rgb(0x1e_1e_1e))
+            .text_color(rgb(0xff_ff_ff))
             // Top navigation bar
             .child(
                 div()
                     .flex()
                     .gap_2()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .border_b_1()
-                    .border_color(rgb(0x3e3e3e))
+                    .border_color(rgb(0x3e_3e_3e))
                     .child(self.nav_button(cx, "/", "Home"))
                     .child(self.nav_button(cx, "/dashboard", "Dashboard"))
                     .child(self.nav_button(cx, "/products", "Products")),
@@ -139,10 +139,10 @@ impl NestedDemoApp {
         div()
             .px_4()
             .py_2()
-            .bg(rgb(0x404040))
+            .bg(rgb(0x40_40_40))
             .rounded_md()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x505050)))
+            .hover(|style| style.bg(rgb(0x50_50_50)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_view, _event, _window, cx| {
@@ -193,7 +193,7 @@ impl Render for HomePage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .child("💡 Try navigating:")
                     .child(
@@ -233,9 +233,9 @@ impl Render for DashboardLayout {
             .child(
                 div()
                     .w(px(200.))
-                    .bg(rgb(0x252525))
+                    .bg(rgb(0x25_25_25))
                     .border_r_1()
-                    .border_color(rgb(0x3e3e3e))
+                    .border_color(rgb(0x3e_3e_3e))
                     .p_4()
                     .flex()
                     .flex_col()
@@ -265,9 +265,9 @@ impl DashboardLayout {
             .px_3()
             .py_2()
             .rounded_md()
-            .bg(rgb(0x2d2d2d))
+            .bg(rgb(0x2d_2d_2d))
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x3d3d3d)))
+            .hover(|style| style.bg(rgb(0x3d_3d_3d)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_view, _event, _window, cx| {
@@ -302,7 +302,7 @@ impl Render for OverviewPage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .child("This is a child route of /dashboard")
                     .child(div().mt_2().child("Full path: /dashboard/overview")),
@@ -330,7 +330,7 @@ impl Render for AnalyticsPage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .child("This page has a fade transition")
                     .child(div().mt_2().child("Full path: /dashboard/analytics")),
@@ -358,7 +358,7 @@ impl Render for SettingsPage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .child("This page has a slide-right transition")
                     .child(div().mt_2().child("Full path: /dashboard/settings")),
@@ -439,10 +439,10 @@ impl ProductListPage {
         div()
             .px_4()
             .py_2()
-            .bg(rgb(0x2d2d2d))
+            .bg(rgb(0x2d_2d_2d))
             .rounded_md()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x3d3d3d)))
+            .hover(|style| style.bg(rgb(0x3d_3d_3d)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_view, _event, _window, cx| {
@@ -480,7 +480,7 @@ impl Render for ProductDetailPage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .child("This is a dynamic child route with parameters")
                     .child(
@@ -495,10 +495,10 @@ impl Render for ProductDetailPage {
                     .mt_4()
                     .px_4()
                     .py_2()
-                    .bg(rgb(0x404040))
+                    .bg(rgb(0x40_40_40))
                     .rounded_md()
                     .cursor_pointer()
-                    .hover(|style| style.bg(rgb(0x505050)))
+                    .hover(|style| style.bg(rgb(0x50_50_50)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_view, _event, _window, cx| {

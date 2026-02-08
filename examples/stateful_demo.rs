@@ -72,17 +72,17 @@ impl Render for StatefulDemoApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x1e1e1e))
-            .text_color(rgb(0xffffff))
+            .bg(rgb(0x1e_1e_1e))
+            .text_color(rgb(0xff_ff_ff))
             // Navigation bar
             .child(
                 div()
                     .flex()
                     .gap_2()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .border_b_1()
-                    .border_color(rgb(0x3e3e3e))
+                    .border_color(rgb(0x3e_3e_3e))
                     .child(self.nav_button(cx, "/", "Home"))
                     .child(self.nav_button(cx, "/counter", "Counter"))
                     .child(self.nav_button(cx, "/form", "Form")),
@@ -101,10 +101,10 @@ impl StatefulDemoApp {
         div()
             .px_4()
             .py_2()
-            .bg(rgb(0x404040))
+            .bg(rgb(0x40_40_40))
             .rounded_md()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x505050)))
+            .hover(|style| style.bg(rgb(0x50_50_50)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_view, _event, _window, cx| {
@@ -153,7 +153,7 @@ impl Render for HomePage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .text_sm()
                     .child("💡 New Ergonomic API")
@@ -221,7 +221,7 @@ impl Render for CounterPage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .text_sm()
                     .child("💡 Counter state persists when you navigate away and back!")
@@ -248,10 +248,10 @@ impl CounterPage {
         div()
             .px_6()
             .py_3()
-            .bg(rgb(0x0066cc))
+            .bg(rgb(0x00_66_cc))
             .rounded_md()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x0077dd)))
+            .hover(|style| style.bg(rgb(0x00_77_dd)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |page, _event, _window, cx| {
@@ -307,10 +307,10 @@ impl Render for FormPage {
                                 div()
                                     .px_3()
                                     .py_2()
-                                    .bg(rgb(0x2d2d2d))
+                                    .bg(rgb(0x2d_2d_2d))
                                     .rounded_md()
                                     .border_1()
-                                    .border_color(rgb(0x404040))
+                                    .border_color(rgb(0x40_40_40))
                                     .child(self.name.clone()),
                             ),
                     )
@@ -324,10 +324,10 @@ impl Render for FormPage {
                                 div()
                                     .px_3()
                                     .py_2()
-                                    .bg(rgb(0x2d2d2d))
+                                    .bg(rgb(0x2d_2d_2d))
                                     .rounded_md()
                                     .border_1()
-                                    .border_color(rgb(0x404040))
+                                    .border_color(rgb(0x40_40_40))
                                     .child(self.email.clone()),
                             ),
                     )
@@ -338,7 +338,7 @@ impl Render for FormPage {
                         div()
                             .mt_4()
                             .p_4()
-                            .bg(rgb(0x1a4d1a))
+                            .bg(rgb(0x1a_4d_1a))
                             .rounded_md()
                             .child("✓ Form submitted!")
                             .child(div().mt_2().text_sm().child(format!("Name: {}", self.name)))
@@ -351,7 +351,7 @@ impl Render for FormPage {
                 div()
                     .mt_4()
                     .p_4()
-                    .bg(rgb(0x2d2d2d))
+                    .bg(rgb(0x2d_2d_2d))
                     .rounded_md()
                     .text_sm()
                     .child("💡 Form state persists across navigation!")
@@ -376,10 +376,10 @@ impl FormPage {
         div()
             .px_6()
             .py_3()
-            .bg(rgb(0x0066cc))
+            .bg(rgb(0x00_66_cc))
             .rounded_md()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x0077dd)))
+            .hover(|style| style.bg(rgb(0x00_77_dd)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |page, _event, _window, cx| {
