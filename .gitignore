@@ -49,3 +49,4 @@ criterion/
 # Editor project files
 *.sublime-project
 *.sublime-workspace
+nul

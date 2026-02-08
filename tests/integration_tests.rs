@@ -203,9 +203,9 @@ async fn test_auth_guard_allows_authenticated(cx: &mut TestAppContext) {
     let guard = AuthGuard::new(|_| true, "/login");
     let request = NavigationRequest::new("/protected".to_string());
 
-    let result = cx.update(|cx| pollster::block_on(guard.check(cx, &request)));
+    let result = cx.update(|cx| guard.check(cx, &request));
 
-    assert!(result.is_allow());
+    assert!(result.is_continue());
 }
 
 #[gpui::test]
@@ -213,7 +213,7 @@ async fn test_auth_guard_redirects_unauthenticated(cx: &mut TestAppContext) {
     let guard = AuthGuard::new(|_| false, "/login");
     let request = NavigationRequest::new("/protected".to_string());
 
-    let result = cx.update(|cx| pollster::block_on(guard.check(cx, &request)));
+    let result = cx.update(|cx| guard.check(cx, &request));
 
     assert!(result.is_redirect());
     assert_eq!(result.redirect_path(), Some("/login"));
@@ -224,9 +224,9 @@ async fn test_role_guard_allows_correct_role(cx: &mut TestAppContext) {
     let guard = RoleGuard::new(|_| Some("admin".to_string()), "admin", None::<String>);
     let request = NavigationRequest::new("/admin".to_string());
 
-    let result = cx.update(|cx| pollster::block_on(guard.check(cx, &request)));
+    let result = cx.update(|cx| guard.check(cx, &request));
 
-    assert!(result.is_allow());
+    assert!(result.is_continue());
 }
 
 #[gpui::test]
@@ -234,7 +234,7 @@ async fn test_role_guard_denies_wrong_role(cx: &mut TestAppContext) {
     let guard = RoleGuard::new(|_| Some("user".to_string()), "admin", None::<String>);
     let request = NavigationRequest::new("/admin".to_string());
 
-    let result = cx.update(|cx| pollster::block_on(guard.check(cx, &request)));
+    let result = cx.update(|cx| guard.check(cx, &request));
 
     assert!(result.is_deny());
 }
@@ -244,27 +244,27 @@ async fn test_permission_guard(cx: &mut TestAppContext) {
     let guard = PermissionGuard::new(|_, perm| perm == "users.read", "users.read");
     let request = NavigationRequest::new("/users".to_string());
 
-    let result = cx.update(|cx| pollster::block_on(guard.check(cx, &request)));
+    let result = cx.update(|cx| guard.check(cx, &request));
 
-    assert!(result.is_allow());
+    assert!(result.is_continue());
 }
 
 // ============================================================================
-// Guard Result Tests
+// NavigationAction Tests
 // ============================================================================
 
 #[test]
-fn test_guard_result_variants() {
-    let allow = GuardResult::allow();
-    assert!(allow.is_allow());
-    assert!(!allow.is_deny());
-    assert!(!allow.is_redirect());
+fn test_navigation_action_variants() {
+    let cont = NavigationAction::allow();
+    assert!(cont.is_continue());
+    assert!(!cont.is_deny());
+    assert!(!cont.is_redirect());
 
-    let deny = GuardResult::deny("Forbidden");
-    assert!(!deny.is_allow());
+    let deny = NavigationAction::deny("Forbidden");
+    assert!(!deny.is_continue());
     assert!(deny.is_deny());
 
-    let redirect = GuardResult::redirect("/login");
+    let redirect = NavigationAction::redirect("/login");
     assert!(redirect.is_redirect());
     assert_eq!(redirect.redirect_path(), Some("/login"));
 }
@@ -439,18 +439,18 @@ async fn test_dynamic_route_matching(cx: &mut TestAppContext) {
 // ============================================================================
 
 #[test]
-fn test_lifecycle_result_variants() {
-    let cont = LifecycleResult::cont();
-    assert!(cont.allows_continue());
-    assert!(!cont.is_abort());
+fn test_lifecycle_navigation_action_variants() {
+    let cont = NavigationAction::allow();
+    assert!(cont.is_continue());
+    assert!(!cont.is_deny());
     assert!(!cont.is_redirect());
 
-    let abort = LifecycleResult::abort("Unsaved changes");
-    assert!(!abort.allows_continue());
-    assert!(abort.is_abort());
+    let deny = NavigationAction::deny("Unsaved changes");
+    assert!(!deny.is_continue());
+    assert!(deny.is_deny());
 
-    let redirect = LifecycleResult::redirect("/login");
-    assert!(!redirect.allows_continue());
+    let redirect = NavigationAction::redirect("/login");
+    assert!(!redirect.is_continue());
     assert!(redirect.is_redirect());
 }
 

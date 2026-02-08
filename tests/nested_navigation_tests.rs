@@ -310,14 +310,12 @@ fn test_parameter_inheritance_merge() {
 #[test]
 fn test_parameter_name_conflict_override() {
     // Both parent and child segments have :id parameter
-    let parent = Arc::new(
-        Route::new("/items", test_builder).children(vec![Arc::new(
-            Route::new(":id", test_builder).children(vec![Arc::new(
+    let parent = Arc::new(Route::new("/items", test_builder).children(vec![Arc::new(
+        Route::new(":id", test_builder).children(vec![Arc::new(
                 Route::new("details", test_builder)
                     .children(vec![Arc::new(Route::new(":id", test_builder))]),
             )]),
-        )]),
-    );
+    )]));
 
     let params = RouteParams::new();
     let result = resolve_child_route(

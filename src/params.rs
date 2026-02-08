@@ -124,6 +124,64 @@ impl RouteParams {
 
         merged
     }
+
+    /// Extract route parameters from a path given a pattern
+    ///
+    /// T045: Helper function for User Story 5 - Parameter Inheritance.
+    /// Matches a path against a pattern and extracts parameter values.
+    ///
+    /// # Pattern Syntax
+    ///
+    /// - `:paramName` - Dynamic segment that matches any value
+    /// - `literal` - Static segment that must match exactly
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use gpui_navigator::RouteParams;
+    ///
+    /// // Pattern: /users/:userId/posts/:postId
+    /// // Path: /users/123/posts/456
+    /// let params = RouteParams::from_path("/users/123/posts/456", "/users/:userId/posts/:postId");
+    ///
+    /// assert_eq!(params.get("userId"), Some(&"123".to_string()));
+    /// assert_eq!(params.get("postId"), Some(&"456".to_string()));
+    ///
+    /// // No match returns empty params
+    /// let params = RouteParams::from_path("/products/xyz", "/users/:userId");
+    /// assert!(params.is_empty());
+    /// ```
+    pub fn from_path(path: &str, pattern: &str) -> RouteParams {
+        let mut params = RouteParams::new();
+
+        // Split path and pattern into segments
+        let path_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let pattern_segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+
+        // Must have same number of segments
+        if path_segments.len() != pattern_segments.len() {
+            return params;
+        }
+
+        // Match each segment
+        for (path_seg, pattern_seg) in path_segments.iter().zip(pattern_segments.iter()) {
+            if let Some(param_name) = pattern_seg.strip_prefix(':') {
+                // Dynamic segment - extract parameter
+                // Handle type constraints like :id<i32> -> extract "id"
+                let param_name = if let Some(pos) = param_name.find('<') {
+                    &param_name[..pos]
+                } else {
+                    param_name
+                };
+                params.insert(param_name.to_string(), path_seg.to_string());
+            } else if pattern_seg != path_seg {
+                // Static segment mismatch - no match
+                return RouteParams::new();
+            }
+        }
+
+        params
+    }
 }
 
 // ============================================================================

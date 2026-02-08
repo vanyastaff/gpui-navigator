@@ -11,7 +11,10 @@
       "mcp__github__get_file_contents",
       "Skill(speckit.specify)",
       "Skill(speckit.specify:*)",
-      "mcp__github__search_repositories"
+      "mcp__github__search_repositories",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Skill(commit-commands:commit)",
+      "Skill(commit-commands:commit:*)"
     ]
   }
 }

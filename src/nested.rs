@@ -41,6 +41,12 @@ use crate::{trace_log, warn_log, RouteParams};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+/// Maximum recursion depth for nested routes (T031 - User Story 3)
+///
+/// Prevents infinite loops and stack overflow in deeply nested route hierarchies.
+/// Configured for 10 levels to support complex applications while maintaining safety.
+const MAX_RECURSION_DEPTH: usize = 10;
+
 /// Resolved child route information
 ///
 /// Contains the matched child route and merged parameters from parent and child.
@@ -115,12 +121,40 @@ pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
     }
 }
 
+/// Resolve a child route with recursion depth tracking (T031)
+///
+/// Public wrapper that starts recursion depth tracking at 0.
+/// Use this function for all external calls.
 pub fn resolve_child_route(
     parent_route: &Arc<Route>,
     current_path: &str,
     parent_params: &RouteParams,
     outlet_name: Option<&str>,
 ) -> Option<ResolvedChildRoute> {
+    resolve_child_route_impl(parent_route, current_path, parent_params, outlet_name, 0)
+}
+
+/// Internal implementation with recursion depth tracking (T031)
+///
+/// Prevents infinite loops by enforcing MAX_RECURSION_DEPTH limit.
+/// Returns None if depth exceeded.
+fn resolve_child_route_impl(
+    parent_route: &Arc<Route>,
+    current_path: &str,
+    parent_params: &RouteParams,
+    outlet_name: Option<&str>,
+    depth: usize,
+) -> Option<ResolvedChildRoute> {
+    // T031: Check recursion depth limit
+    if depth >= MAX_RECURSION_DEPTH {
+        warn_log!(
+            "Maximum recursion depth ({}) exceeded while resolving path '{}' from parent '{}'",
+            MAX_RECURSION_DEPTH,
+            current_path,
+            parent_route.config.path
+        );
+        return None;
+    }
     // T051: Explicit check for empty current path - normalize to root
     let normalized_current = if current_path.is_empty() {
         "/"
@@ -140,11 +174,6 @@ pub fn resolve_child_route(
         parent_route.get_children().len(),
         outlet_name
     );
-    println!(
-        "DEBUG: parent='{}', current_path='{}'",
-        parent_route.config.path, normalized_current
-    );
-
     // Get the children for this outlet (named or default)
     let children = if let Some(name) = outlet_name {
         // Named outlet - get children from named_children map
@@ -257,6 +286,19 @@ pub fn resolve_child_route(
             // If this is a parameter route, extract the parameter (BUG-003: use extract_param_name)
             if child_path.starts_with(':') {
                 let param_name = extract_param_name(child_path);
+
+                // T047: Warn on parameter collision (debug mode)
+                #[cfg(debug_assertions)]
+                if parent_params.contains(&param_name) {
+                    warn_log!(
+                        "Parameter collision: child route '{}' shadows parent parameter '{}' (parent value: '{}', child value: '{}')",
+                        child.config.path,
+                        param_name,
+                        parent_params.get(&param_name).unwrap_or(&"<none>".to_string()),
+                        first_segment
+                    );
+                }
+
                 combined_params.insert(param_name.to_string(), first_segment.to_string());
             }
 
@@ -277,10 +319,14 @@ pub fn resolve_child_route(
                 };
                 trace_log!("  remaining_path for recursion: '{}'", remaining_path);
 
-                // Recursively resolve the child route with the remaining path
-                if let Some((grandchild, grandchild_params)) =
-                    resolve_child_route(&child, &remaining_path, &combined_params, outlet_name)
-                {
+                // Recursively resolve the child route with the remaining path (T031: pass depth + 1)
+                if let Some((grandchild, grandchild_params)) = resolve_child_route_impl(
+                    &child,
+                    &remaining_path,
+                    &combined_params,
+                    outlet_name,
+                    depth + 1,
+                ) {
                     return Some((grandchild, grandchild_params));
                 }
                 // If recursive resolution fails, continue to next child
@@ -295,31 +341,73 @@ pub fn resolve_child_route(
 }
 
 /// Find an index route (default child route when no specific child is selected)
+///
+/// T037: Prioritize index routes (empty path "") when no exact child match.
+/// An index route serves as the default content when navigating to a parent path.
+///
+/// # Priority Order
+///
+/// 1. Empty path ("") - highest priority, explicit index route
+/// 2. Path "index" - alternative naming convention
+///
+/// # Examples
+///
+/// ```ignore
+/// // Define index route
+/// Route::new("/dashboard", |_, _, _| {
+///     div().child(render_router_outlet(...))
+/// })
+/// .children(vec![
+///     Route::new("", |_, _, _| div().child("Overview")).into(),  // Index route
+///     Route::new("settings", |_, _, _| div().child("Settings")).into(),
+/// ]);
+///
+/// // Navigate to "/dashboard" → renders Overview (index route)
+/// // Navigate to "/dashboard/settings" → renders Settings
+/// ```
 fn find_index_route(children: &[Arc<Route>], params: RouteParams) -> Option<ResolvedChildRoute> {
     trace_log!("find_index_route: searching {} children", children.len());
 
-    // Look for a child with empty path, "/" or "index"
+    // T037: Prioritize index routes by checking for empty path first
+    // Priority 1: Empty path ("") - explicit index route
     for child in children {
-        // Use normalize_path() for consistent path handling
         let child_path_normalized = normalize_path(&child.config.path);
         let child_path = child_path_normalized.trim_matches('/');
 
-        println!(
-            "DEBUG find_index_route: checking child path: '{}' (original: '{}', normalized: '{}')",
-            child_path, child.config.path, child_path_normalized
+        trace_log!(
+            "find_index_route: checking child path: '{}' (original: '{}', normalized: '{}')",
+            child_path,
+            child.config.path,
+            child_path_normalized
         );
 
-        if child_path.is_empty() || child_path == "index" {
-            println!(
-                "DEBUG find_index_route: ✓ found index route with original path '{}'",
+        if child_path.is_empty() {
+            trace_log!(
+                "find_index_route: ✓ found index route with empty path '{}'",
                 child.config.path
             );
             return Some((Arc::clone(child), params));
         }
     }
 
-    warn_log!("  ✗ no index route found among {} children", children.len());
-    println!("DEBUG find_index_route: no index route found");
+    // Priority 2: Path "index" - alternative naming convention
+    for child in children {
+        let child_path_normalized = normalize_path(&child.config.path);
+        let child_path = child_path_normalized.trim_matches('/');
+
+        if child_path == "index" {
+            trace_log!(
+                "find_index_route: ✓ found index route with path 'index' (original: '{}')",
+                child.config.path
+            );
+            return Some((Arc::clone(child), params));
+        }
+    }
+
+    trace_log!(
+        "find_index_route: ✗ no index route found among {} children",
+        children.len()
+    );
     None
 }
 

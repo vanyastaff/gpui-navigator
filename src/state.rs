@@ -301,6 +301,24 @@ impl RouterState {
         self.current < self.history.len() - 1
     }
 
+    /// Peek at the path we would navigate to on `back()`, without actually navigating.
+    pub fn peek_back_path(&self) -> Option<&str> {
+        if self.current > 0 {
+            Some(&self.history[self.current - 1])
+        } else {
+            None
+        }
+    }
+
+    /// Peek at the path we would navigate to on `forward()`, without actually navigating.
+    pub fn peek_forward_path(&self) -> Option<&str> {
+        if self.current < self.history.len() - 1 {
+            Some(&self.history[self.current + 1])
+        } else {
+            None
+        }
+    }
+
     /// Clear navigation history
     pub fn clear(&mut self) {
         self.history.clear();

@@ -117,7 +117,7 @@ pub mod cache;
 // Core routing modules
 pub mod history;
 pub mod matcher;
-pub mod matching; // New segment-based matching for nested routing redesign
+pub mod matching; // Legacy segment-based matching (to be removed)
 #[cfg(feature = "middleware")]
 pub mod middleware;
 pub mod route;
@@ -140,6 +140,7 @@ pub mod transition;
 // Other modules
 pub mod nested;
 pub mod params;
+pub mod resolve;
 pub mod widgets;
 
 // Context module (router context integration)
@@ -155,14 +156,14 @@ pub use context::{
 pub use error::{ErrorHandler, ErrorHandlers, NavigationError, NavigationResult, NotFoundHandler};
 #[cfg(feature = "guard")]
 pub use guards::{
-    guard_fn, AuthGuard, BoxedGuard, GuardBuilder, GuardContext, GuardResult, Guards, NotGuard,
-    PermissionGuard, RoleGuard, RouteGuard,
+    guard_fn, AuthGuard, GuardBuilder, Guards, NotGuard, PermissionGuard, RoleGuard, RouteGuard,
 };
-pub use lifecycle::{BoxedLifecycle, LifecycleResult, RouteLifecycle};
+pub use lifecycle::{NavigationAction, RouteLifecycle};
 #[cfg(feature = "middleware")]
-pub use middleware::{middleware_fn, BoxedMiddleware, RouteMiddleware};
+pub use middleware::{middleware_fn, RouteMiddleware};
 pub use nested::{build_child_path, extract_param_name, normalize_path, resolve_child_route};
 pub use params::{QueryParams, RouteParams};
+pub use resolve::{resolve_match_stack, MatchEntry, MatchStack};
 pub use route::{
     validate_route_path, BuilderFn, IntoRoute, NamedRoute, NamedRouteRegistry, PageRoute, Route,
     RouteConfig, RouteDescriptor,

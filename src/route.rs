@@ -1,10 +1,10 @@
 //! Route definition and configuration
 
 #[cfg(feature = "guard")]
-use crate::guards::BoxedGuard;
-use crate::lifecycle::BoxedLifecycle;
+use crate::guards::RouteGuard;
+use crate::lifecycle::RouteLifecycle;
 #[cfg(feature = "middleware")]
-use crate::middleware::BoxedMiddleware;
+use crate::middleware::RouteMiddleware;
 use crate::params::RouteParams;
 #[cfg(feature = "transition")]
 use crate::transition::TransitionConfig;
@@ -280,23 +280,22 @@ pub struct Route {
     pub named_children: HashMap<String, Vec<RouteRef>>,
     /// Guards that control access to this route
     #[cfg(feature = "guard")]
-    pub guards: Vec<BoxedGuard>,
+    pub guards: Vec<Box<dyn RouteGuard>>,
     /// Middleware that runs before and after navigation to this route
     #[cfg(feature = "middleware")]
-    pub middleware: Vec<BoxedMiddleware>,
+    pub middleware: Vec<Box<dyn RouteMiddleware>>,
     /// Lifecycle hooks for this route
-    pub lifecycle: Option<BoxedLifecycle>,
+    pub lifecycle: Option<Box<dyn RouteLifecycle>>,
     /// Transition animation for this route
     #[cfg(feature = "transition")]
     pub transition: TransitionConfig,
 }
 
 impl Route {
-    /// Create a route with a builder function
+    /// Create a route with a builder function.
     ///
-    /// Routes are registered with a path pattern and a builder function that
-    /// creates the view. The builder receives the window, app context and extracted
-    /// route parameters.
+    /// The builder receives the window, app context and extracted route parameters,
+    /// and must return `AnyElement`. Use `.into_any_element()` on your element.
     ///
     /// # Example
     ///
@@ -305,26 +304,23 @@ impl Route {
     /// use gpui::*;
     ///
     /// // Simple static route
-    /// Route::new("/home", |window, cx, params| {
-    ///     div().child("Home Page")
+    /// Route::new("/home", |_window, _cx, _params| {
+    ///     div().child("Home Page").into_any_element()
     /// });
     ///
     /// // Route with dynamic parameter
-    /// Route::new("/users/:id", |window, cx, params| {
+    /// Route::new("/users/:id", |_window, _cx, params| {
     ///     let id = params.get("id").unwrap();
-    ///     div().child(format!("User: {}", id))
+    ///     div().child(format!("User: {}", id)).into_any_element()
     /// });
     /// ```
-    pub fn new<F, E>(path: impl Into<String>, builder: F) -> Self
+    pub fn new<F>(path: impl Into<String>, builder: F) -> Self
     where
-        E: IntoElement,
-        F: Fn(&mut Window, &mut App, &RouteParams) -> E + Send + Sync + 'static,
+        F: Fn(&mut Window, &mut App, &RouteParams) -> AnyElement + Send + Sync + 'static,
     {
         Self {
             config: RouteConfig::new(path),
-            builder: Some(Arc::new(move |window, cx, params| {
-                builder(window, cx, params).into_any_element()
-            })),
+            builder: Some(Arc::new(builder)),
             children: Vec::new(),
             named_children: HashMap::new(),
             #[cfg(feature = "guard")]
@@ -337,7 +333,7 @@ impl Route {
         }
     }
 
-    /// Create a stateless route from a simple view function
+    /// Create a stateless route from a simple view function.
     ///
     /// Use this for simple, stateless pages that don't need access to route params,
     /// window, or context. The view function is called on every render.
@@ -352,10 +348,10 @@ impl Route {
     ///     div().child("About Page").into_any_element()
     /// });
     /// ```
-    pub fn view<F>(path: impl Into<String>, view: F) -> Self
-    where
-        F: Fn() -> AnyElement + Send + Sync + 'static,
-    {
+    pub fn view(
+        path: impl Into<String>,
+        view: impl Fn() -> AnyElement + Send + Sync + 'static,
+    ) -> Self {
         Self::new(path, move |_, _, _| view())
     }
 
@@ -470,29 +466,75 @@ impl Route {
     ///
     /// Child routes will be rendered in a RouterOutlet within the parent's layout.
     ///
+    /// # T038: Index Route Validation
+    ///
+    /// This method validates child routes and warns if there's an ambiguous default:
+    /// - If a parent has multiple children and no index route (path=""), users must
+    ///   explicitly navigate to a child path. Without an index, navigating to the
+    ///   parent path alone will show nothing.
+    ///
     /// # Example
     ///
     /// ```no_run
     /// use gpui_navigator::{Route, render_router_outlet};
     /// use gpui::*;
     ///
+    /// // Good: Has index route for default content
     /// Route::new("/dashboard", |window, cx, params| {
     ///     div()
     ///         .child("Dashboard Header")
-    ///         .child(render_router_outlet(window, cx, None)) // Children render here
+    ///         .child(render_router_outlet(window, cx, None))
+    ///         .into_any_element()
     /// })
     /// .children(vec![
-    ///     Route::new("overview", |_, _cx, _params| {
-    ///         div().child("Overview")
+    ///     Route::new("", |_, _cx, _params| {        // Index route
+    ///         div().child("Overview (Default)").into_any_element()
     ///     })
     ///     .into(),
     ///     Route::new("settings", |_, _cx, _params| {
-    ///         div().child("Settings")
+    ///         div().child("Settings").into_any_element()
+    ///     })
+    ///     .into(),
+    /// ]);
+    ///
+    /// // Warning: No index route - navigating to "/dashboard" shows nothing
+    /// Route::new("/dashboard", |window, cx, params| {
+    ///     div()
+    ///         .child("Dashboard Header")
+    ///         .child(render_router_outlet(window, cx, None))
+    ///         .into_any_element()
+    /// })
+    /// .children(vec![
+    ///     Route::new("overview", |_, _cx, _params| {
+    ///         div().child("Overview").into_any_element()
+    ///     })
+    ///     .into(),
+    ///     Route::new("settings", |_, _cx, _params| {
+    ///         div().child("Settings").into_any_element()
     ///     })
     ///     .into(),
     /// ]);
     /// ```
     pub fn children(mut self, children: Vec<RouteRef>) -> Self {
+        // T038: Validate index routes - warn if ambiguous default
+        if children.len() > 1 {
+            let has_index = children.iter().any(|child| {
+                let path = child.config.path.trim_matches('/');
+                path.is_empty() || path == "index"
+            });
+
+            if !has_index && !self.config.path.is_empty() {
+                eprintln!(
+                    "⚠️  Route '{}' has {} children but no index route (path=\"\" or \"index\").\n\
+                     Navigating to '{}' alone will show no content. Consider adding an index route:\n\
+                     Route::new(\"\", |_, _, _| div().child(\"Default Content\")).into()",
+                    self.config.path,
+                    children.len(),
+                    self.config.path
+                );
+            }
+        }
+
         self.children = children;
         self
     }
@@ -505,9 +547,9 @@ impl Route {
     /// use gpui_navigator::Route;
     /// use gpui::*;
     ///
-    /// Route::new("/dashboard", |_, _cx, _params| div())
-    ///     .child(Route::new("overview", |_, _cx, _params| div()).into())
-    ///     .child(Route::new("settings", |_, _cx, _params| div()).into());
+    /// Route::new("/dashboard", |_, _cx, _params| div().into_any_element())
+    ///     .child(Route::new("overview", |_, _cx, _params| div().into_any_element()).into())
+    ///     .child(Route::new("settings", |_, _cx, _params| div().into_any_element()).into());
     /// ```
     pub fn child(mut self, child: RouteRef) -> Self {
         self.children.push(child);
@@ -532,7 +574,7 @@ impl Route {
     /// use gpui_navigator::Route;
     /// use gpui::*;
     ///
-    /// Route::new("/admin", |_, _cx, _params| div())
+    /// Route::new("/admin", |_, _cx, _params| div().into_any_element())
     ///     .meta("requiresAuth", "true")
     ///     .meta("requiredRole", "admin")
     ///     .meta("title", "Admin Panel");
@@ -557,12 +599,13 @@ impl Route {
     ///     div()
     ///         .child(render_router_outlet(window, cx, None))             // Main content
     ///         .child(render_router_outlet(window, cx, Some("sidebar")))  // Sidebar
+    ///         .into_any_element()
     /// })
     /// .children(vec![
-    ///     Route::new("analytics", |_, _cx, _params| div()).into(),
+    ///     Route::new("analytics", |_, _cx, _params| div().into_any_element()).into(),
     /// ])
     /// .named_outlet("sidebar", vec![
-    ///     Route::new("stats", |_, _cx, _params| div()).into(),
+    ///     Route::new("stats", |_, _cx, _params| div().into_any_element()).into(),
     /// ]);
     /// ```
     pub fn named_outlet(mut self, name: impl Into<String>, children: Vec<RouteRef>) -> Self {
@@ -583,38 +626,19 @@ impl Route {
     /// fn is_authenticated(_cx: &App) -> bool { true }
     /// fn get_role(_cx: &App) -> Option<String> { Some("user".into()) }
     ///
-    /// Route::new("/dashboard", |_, _cx, _params| div())
+    /// Route::new("/dashboard", |_, _cx, _params| div().into_any_element())
     ///     .guard(AuthGuard::new(is_authenticated, "/login"))
     ///     .guard(RoleGuard::new(get_role, "user", Some("/forbidden")));
     /// ```
     #[cfg(feature = "guard")]
-    pub fn guard<G>(mut self, guard: G) -> Self
-    where
-        G: crate::guards::RouteGuard<
-            Future = std::pin::Pin<
-                Box<dyn std::future::Future<Output = crate::guards::GuardResult> + Send>,
-            >,
-        >,
-    {
+    pub fn guard<G: crate::guards::RouteGuard>(mut self, guard: G) -> Self {
         self.guards.push(Box::new(guard));
         self
     }
 
-    /// Add multiple guards at once
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use gpui_navigator::{Route, BoxedGuard};
-    /// use gpui::*;
-    ///
-    /// Route::new("/admin", |_, _cx, _params| div())
-    ///     .guards(vec![
-    ///         // Add boxed guards here
-    ///     ]);
-    /// ```
+    /// Add multiple guards at once (pre-boxed).
     #[cfg(feature = "guard")]
-    pub fn guards(mut self, guards: Vec<BoxedGuard>) -> Self {
+    pub fn guards(mut self, guards: Vec<Box<dyn crate::guards::RouteGuard>>) -> Self {
         self.guards.extend(guards);
         self
     }
@@ -633,31 +657,17 @@ impl Route {
     /// //     .middleware(LoggingMiddleware::new());
     /// ```
     #[cfg(feature = "middleware")]
-    pub fn middleware<M>(mut self, middleware: M) -> Self
-    where
-        M: crate::middleware::RouteMiddleware<
-            Future = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-        >,
-    {
+    pub fn middleware<M: crate::middleware::RouteMiddleware>(mut self, middleware: M) -> Self {
         self.middleware.push(Box::new(middleware));
         self
     }
 
-    /// Add multiple middleware at once
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use gpui_navigator::{Route, BoxedMiddleware};
-    /// use gpui::*;
-    ///
-    /// Route::new("/dashboard", |_, _cx, _params| div().into_any_element())
-    ///     .middlewares(vec![
-    ///         // Add boxed middleware here
-    ///     ]);
-    /// ```
+    /// Add multiple middleware at once (pre-boxed).
     #[cfg(feature = "middleware")]
-    pub fn middlewares(mut self, middleware: Vec<BoxedMiddleware>) -> Self {
+    pub fn middlewares(
+        mut self,
+        middleware: Vec<Box<dyn crate::middleware::RouteMiddleware>>,
+    ) -> Self {
         self.middleware.extend(middleware);
         self
     }
@@ -669,7 +679,7 @@ impl Route {
     /// # Example
     ///
     /// ```no_run
-    /// use gpui_navigator::{Route, RouteLifecycle, LifecycleResult, NavigationRequest};
+    /// use gpui_navigator::{Route, RouteLifecycle, NavigationRequest};
     /// use gpui::*;
     /// use std::pin::Pin;
     /// use std::future::Future;
@@ -677,14 +687,7 @@ impl Route {
     /// // Lifecycle hooks allow running code when entering/exiting routes
     /// // Implement RouteLifecycle trait for custom behavior
     /// ```
-    pub fn lifecycle<L>(mut self, lifecycle: L) -> Self
-    where
-        L: crate::lifecycle::RouteLifecycle<
-            Future = std::pin::Pin<
-                Box<dyn std::future::Future<Output = crate::lifecycle::LifecycleResult> + Send>,
-            >,
-        >,
-    {
+    pub fn lifecycle<L: crate::lifecycle::RouteLifecycle>(mut self, lifecycle: L) -> Self {
         self.lifecycle = Some(Box::new(lifecycle));
         self
     }
@@ -916,36 +919,28 @@ impl PageRoute {
         }
     }
 
-    /// Create a PageRoute with a builder function
+    /// Create a PageRoute with a builder function.
     ///
-    /// The builder can return any type that implements `IntoElement` -
-    /// conversion to `AnyElement` is done automatically.
-    pub fn builder<F, E>(path: impl Into<String>, builder: F) -> Self
-    where
-        E: IntoElement,
-        F: Fn(&mut Window, &mut App, &RouteParams) -> E + Send + Sync + 'static,
-    {
+    /// The builder must return `AnyElement`.
+    pub fn builder(
+        path: impl Into<String>,
+        builder: impl Fn(&mut Window, &mut App, &RouteParams) -> AnyElement + Send + Sync + 'static,
+    ) -> Self {
         Self {
             path: path.into(),
             params: RouteParams::new(),
-            builder: Some(Arc::new(move |window, cx, params| {
-                builder(window, cx, params).into_any_element()
-            })),
+            builder: Some(Arc::new(builder)),
         }
     }
 
-    /// Set the builder function for this route
+    /// Set the builder function for this route.
     ///
-    /// The builder can return any type that implements `IntoElement` -
-    /// conversion to `AnyElement` is done automatically.
-    pub fn with_builder<F, E>(mut self, builder: F) -> Self
-    where
-        E: IntoElement,
-        F: Fn(&mut Window, &mut App, &RouteParams) -> E + Send + Sync + 'static,
-    {
-        self.builder = Some(Arc::new(move |window, cx, params| {
-            builder(window, cx, params).into_any_element()
-        }));
+    /// The builder must return `AnyElement`.
+    pub fn with_builder(
+        mut self,
+        builder: impl Fn(&mut Window, &mut App, &RouteParams) -> AnyElement + Send + Sync + 'static,
+    ) -> Self {
+        self.builder = Some(Arc::new(builder));
         self
     }
 

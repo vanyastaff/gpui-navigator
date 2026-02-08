@@ -140,4 +140,117 @@ mod params_tests {
         assert_eq!(merged_l3.get("taskId"), Some(&"task-789".to_string()));
         assert_eq!(merged_l3.len(), 3);
     }
+
+    // T049: Additional tests for User Story 5 - Parameter Inheritance
+
+    #[test]
+    fn test_from_path_single_param() {
+        // T049 - Extract single parameter from path
+        let params = RouteParams::from_path("/users/123", "/users/:id");
+
+        assert_eq!(params.get("id"), Some(&"123".to_string()));
+        assert_eq!(params.len(), 1);
+    }
+
+    #[test]
+    fn test_from_path_multiple_params() {
+        // T049 - Extract multiple parameters from path
+        let params = RouteParams::from_path("/users/123/posts/456", "/users/:userId/posts/:postId");
+
+        assert_eq!(params.get("userId"), Some(&"123".to_string()));
+        assert_eq!(params.get("postId"), Some(&"456".to_string()));
+        assert_eq!(params.len(), 2);
+    }
+
+    #[test]
+    fn test_from_path_no_match() {
+        // T049 - Different number of segments returns empty
+        let params = RouteParams::from_path("/users/123/extra", "/users/:id");
+
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn test_from_path_static_mismatch() {
+        // T049 - Static segment mismatch returns empty
+        let params = RouteParams::from_path("/products/123", "/users/:id");
+
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn test_from_path_with_type_constraints() {
+        // T049 - Handle type constraints like :id<i32>
+        let params = RouteParams::from_path("/users/123", "/users/:id<i32>");
+
+        assert_eq!(params.get("id"), Some(&"123".to_string()));
+        assert_eq!(params.len(), 1);
+    }
+
+    #[test]
+    fn test_four_level_param_merging() {
+        // T049 - Test 4-level parameter inheritance (workspace → project → task → subtask)
+        let mut workspace = RouteParams::new();
+        workspace.set("workspaceId".to_string(), "ws-1".to_string());
+
+        let mut project = RouteParams::new();
+        project.set("projectId".to_string(), "proj-2".to_string());
+        let merged_proj = RouteParams::merge(&workspace, &project);
+
+        let mut task = RouteParams::new();
+        task.set("taskId".to_string(), "task-3".to_string());
+        let merged_task = RouteParams::merge(&merged_proj, &task);
+
+        let mut subtask = RouteParams::new();
+        subtask.set("subtaskId".to_string(), "sub-4".to_string());
+        let merged_final = RouteParams::merge(&merged_task, &subtask);
+
+        // All 4 levels should be present
+        assert_eq!(merged_final.get("workspaceId"), Some(&"ws-1".to_string()));
+        assert_eq!(merged_final.get("projectId"), Some(&"proj-2".to_string()));
+        assert_eq!(merged_final.get("taskId"), Some(&"task-3".to_string()));
+        assert_eq!(merged_final.get("subtaskId"), Some(&"sub-4".to_string()));
+        assert_eq!(merged_final.len(), 4);
+    }
+
+    #[test]
+    fn test_param_collision_in_deep_hierarchy() {
+        // T049 - Child overrides parent in multi-level hierarchy
+        let mut level1 = RouteParams::new();
+        level1.set("id".to_string(), "level1-id".to_string());
+        level1.set("status".to_string(), "active".to_string());
+
+        let mut level2 = RouteParams::new();
+        level2.set("id".to_string(), "level2-id".to_string()); // Override
+        let merged = RouteParams::merge(&level1, &level2);
+
+        // level2 "id" should win
+        assert_eq!(merged.get("id"), Some(&"level2-id".to_string()));
+        // level1 "status" should be preserved
+        assert_eq!(merged.get("status"), Some(&"active".to_string()));
+    }
+
+    #[test]
+    fn test_settings_page_scenario() {
+        // T049 - Simulate the T048 example: /workspace/:workspaceId/project/:projectId/settings
+        // Settings page receives both workspaceId and projectId
+
+        // Simulate workspace level
+        let mut workspace_params = RouteParams::new();
+        workspace_params.set("workspaceId".to_string(), "123".to_string());
+
+        // Simulate project level
+        let mut project_params = RouteParams::new();
+        project_params.set("projectId".to_string(), "456".to_string());
+        let merged_project = RouteParams::merge(&workspace_params, &project_params);
+
+        // Simulate settings level (no new params, but inherits both)
+        let settings_params = RouteParams::new();
+        let final_params = RouteParams::merge(&merged_project, &settings_params);
+
+        // Settings page should have access to both params
+        assert_eq!(final_params.get("workspaceId"), Some(&"123".to_string()));
+        assert_eq!(final_params.get("projectId"), Some(&"456".to_string()));
+        assert_eq!(final_params.len(), 2);
+    }
 }

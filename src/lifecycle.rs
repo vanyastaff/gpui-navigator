@@ -1,136 +1,242 @@
-//! Route lifecycle hooks
+//! Route lifecycle hooks and navigation action types
+//!
+//! This module defines [`NavigationAction`] --- the unified result type for guards,
+//! lifecycle hooks, and middleware decisions --- and the [`RouteLifecycle`] trait
+//! for running code when entering or exiting routes.
 
 use crate::NavigationRequest;
 use gpui::App;
-use std::future::Future;
-use std::pin::Pin;
 
-/// Result of a lifecycle hook
+// ============================================================================
+// NavigationAction — unified result for guards, lifecycle, middleware
+// ============================================================================
+
+/// Result of a navigation check (guard, lifecycle, or middleware).
+///
+/// Used by guards to allow/deny navigation, by lifecycle hooks to
+/// continue/abort, and as a general "what should the router do?" answer.
+///
+/// # Example
+///
+/// ```
+/// use gpui_navigator::NavigationAction;
+///
+/// let action = NavigationAction::deny("Not authorized");
+/// assert!(action.is_deny());
+///
+/// let action = NavigationAction::redirect("/login");
+/// assert_eq!(action.redirect_path(), Some("/login"));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
-pub enum LifecycleResult {
-    /// Continue with navigation
+pub enum NavigationAction {
+    /// Allow navigation to proceed.
     Continue,
 
-    /// Abort navigation with reason
-    Abort { reason: String },
+    /// Deny navigation with a reason.
+    Deny {
+        /// Human-readable reason for denying navigation.
+        reason: String,
+    },
 
-    /// Redirect to another path
-    Redirect { to: String },
+    /// Redirect to a different path.
+    Redirect {
+        /// Path to redirect to.
+        to: String,
+        /// Optional human-readable reason for redirecting.
+        reason: Option<String>,
+    },
 }
 
-impl LifecycleResult {
-    /// Create a continue result
-    pub fn cont() -> Self {
+impl NavigationAction {
+    /// Create a continue/allow result.
+    pub fn allow() -> Self {
         Self::Continue
     }
 
-    /// Create an abort result
-    pub fn abort(reason: impl Into<String>) -> Self {
-        Self::Abort {
+    /// Create a deny result with a reason.
+    pub fn deny(reason: impl Into<String>) -> Self {
+        Self::Deny {
             reason: reason.into(),
         }
     }
 
-    /// Create a redirect result
+    /// Create a redirect result.
     pub fn redirect(to: impl Into<String>) -> Self {
-        Self::Redirect { to: to.into() }
+        Self::Redirect {
+            to: to.into(),
+            reason: None,
+        }
     }
 
-    /// Check if lifecycle allows continuation
-    pub fn allows_continue(&self) -> bool {
-        matches!(self, LifecycleResult::Continue)
+    /// Create a redirect result with a reason.
+    pub fn redirect_with_reason(to: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::Redirect {
+            to: to.into(),
+            reason: Some(reason.into()),
+        }
     }
 
-    /// Check if lifecycle aborts
-    pub fn is_abort(&self) -> bool {
-        matches!(self, LifecycleResult::Abort { .. })
+    /// Check if this action allows navigation to continue.
+    pub fn is_continue(&self) -> bool {
+        matches!(self, Self::Continue)
     }
 
-    /// Check if lifecycle redirects
+    /// Check if this action denies navigation.
+    pub fn is_deny(&self) -> bool {
+        matches!(self, Self::Deny { .. })
+    }
+
+    /// Check if this action redirects navigation.
     pub fn is_redirect(&self) -> bool {
-        matches!(self, LifecycleResult::Redirect { .. })
+        matches!(self, Self::Redirect { .. })
+    }
+
+    /// Get the redirect path, if this is a redirect action.
+    pub fn redirect_path(&self) -> Option<&str> {
+        match self {
+            Self::Redirect { to, .. } => Some(to.as_str()),
+            _ => None,
+        }
     }
 }
 
-/// Route lifecycle hooks
+// Backward-compatibility aliases
+
+/// Deprecated alias for [`NavigationAction`].
+#[deprecated(since = "0.2.0", note = "Use NavigationAction instead")]
+pub type GuardResult = NavigationAction;
+
+/// Deprecated alias for [`NavigationAction`].
+#[deprecated(since = "0.2.0", note = "Use NavigationAction instead")]
+pub type LifecycleResult = NavigationAction;
+
+// ============================================================================
+// RouteLifecycle trait
+// ============================================================================
+
+/// Route lifecycle hooks.
 ///
 /// Lifecycle hooks allow you to run code at key points in the navigation process:
-/// - `on_enter`: Called when entering a route (for data loading, setup)
-/// - `on_exit`: Called when leaving a route (for cleanup, saving state)
-/// - `can_deactivate`: Called to check if user can leave (for unsaved changes warning)
+/// - [`on_enter`](RouteLifecycle::on_enter): Called when entering a route (for data loading, setup)
+/// - [`on_exit`](RouteLifecycle::on_exit): Called when leaving a route (for cleanup, saving state)
+/// - [`can_deactivate`](RouteLifecycle::can_deactivate): Called to check if user can leave (for unsaved changes warning)
+///
+/// All methods are **synchronous** because GPUI is a single-threaded desktop framework.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use gpui_navigator::{RouteLifecycle, LifecycleResult, NavigationRequest};
-/// use std::future::Future;
-/// use std::pin::Pin;
+/// use gpui_navigator::{RouteLifecycle, NavigationAction, NavigationRequest};
 ///
-/// struct FormLifecycle;
+/// struct FormLifecycle {
+///     has_unsaved_changes: bool,
+/// }
 ///
 /// impl RouteLifecycle for FormLifecycle {
-///     type Future = Pin<Box<dyn Future<Output = LifecycleResult> + Send>>;
-///
-///     fn on_enter(&self, _cx: &gpui::App, _request: &NavigationRequest) -> Self::Future {
-///         // Load form data
-///         Box::pin(async { LifecycleResult::Continue })
+///     fn on_enter(&self, _cx: &gpui::App, _request: &NavigationRequest) -> NavigationAction {
+///         NavigationAction::Continue
 ///     }
 ///
-///     fn on_exit(&self, _cx: &gpui::App) -> Self::Future {
-///         Box::pin(async { LifecycleResult::Continue })
+///     fn on_exit(&self, _cx: &gpui::App) -> NavigationAction {
+///         NavigationAction::Continue
 ///     }
 ///
-///     fn can_deactivate(&self, _cx: &gpui::App) -> Self::Future {
-///         // Check for unsaved changes
-///         Box::pin(async { LifecycleResult::Continue })
+///     fn can_deactivate(&self, _cx: &gpui::App) -> NavigationAction {
+///         if self.has_unsaved_changes {
+///             NavigationAction::deny("Unsaved changes")
+///         } else {
+///             NavigationAction::Continue
+///         }
 ///     }
 /// }
 /// ```
 pub trait RouteLifecycle: Send + Sync + 'static {
-    /// The future returned by lifecycle methods
-    type Future: Future<Output = LifecycleResult> + Send + 'static;
+    /// Called when entering the route.
+    ///
+    /// Use this to load data, set up subscriptions, or validate navigation parameters.
+    /// Return [`NavigationAction::deny`] to prevent navigation
+    /// or [`NavigationAction::redirect`] to navigate elsewhere.
+    fn on_enter(&self, cx: &App, request: &NavigationRequest) -> NavigationAction;
 
-    /// Called when entering the route
+    /// Called when exiting the route.
     ///
-    /// Use this to:
-    /// - Load data for the route
-    /// - Set up subscriptions
-    /// - Initialize state
-    /// - Validate navigation parameters
-    ///
-    /// Return `LifecycleResult::Abort` to prevent navigation.
-    /// Return `LifecycleResult::Redirect` to navigate elsewhere.
-    fn on_enter(&self, cx: &App, request: &NavigationRequest) -> Self::Future;
+    /// Use this to save state, clean up subscriptions, or cancel pending operations.
+    /// Return [`NavigationAction::deny`] to prevent navigation away.
+    fn on_exit(&self, cx: &App) -> NavigationAction;
 
-    /// Called when exiting the route
+    /// Check if the route can be deactivated.
     ///
-    /// Use this to:
-    /// - Save state
-    /// - Clean up subscriptions
-    /// - Cancel pending operations
-    ///
-    /// Return `LifecycleResult::Abort` to prevent navigation.
-    fn on_exit(&self, cx: &App) -> Self::Future;
-
-    /// Check if the route can be deactivated
-    ///
-    /// Use this to:
-    /// - Check for unsaved changes
-    /// - Confirm navigation away
-    /// - Validate state before leaving
-    ///
-    /// Return `LifecycleResult::Abort` to prevent navigation.
-    fn can_deactivate(&self, cx: &App) -> Self::Future;
+    /// Use this to check for unsaved changes or confirm navigation away.
+    /// Return [`NavigationAction::deny`] to prevent navigation.
+    fn can_deactivate(&self, cx: &App) -> NavigationAction;
 }
 
-/// Type-erased lifecycle for dynamic dispatch
-pub type BoxedLifecycle =
-    Box<dyn RouteLifecycle<Future = Pin<Box<dyn Future<Output = LifecycleResult> + Send>>>>;
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+
+    // --- NavigationAction tests ---
+
+    #[test]
+    fn test_navigation_action_continue() {
+        let action = NavigationAction::Continue;
+        assert!(action.is_continue());
+        assert!(!action.is_deny());
+        assert!(!action.is_redirect());
+        assert_eq!(action.redirect_path(), None);
+    }
+
+    #[test]
+    fn test_navigation_action_allow_alias() {
+        let action = NavigationAction::allow();
+        assert!(action.is_continue());
+    }
+
+    #[test]
+    fn test_navigation_action_deny() {
+        let action = NavigationAction::deny("Not authorized");
+        assert!(!action.is_continue());
+        assert!(action.is_deny());
+        assert!(!action.is_redirect());
+
+        match action {
+            NavigationAction::Deny { reason } => assert_eq!(reason, "Not authorized"),
+            _ => panic!("Expected Deny"),
+        }
+    }
+
+    #[test]
+    fn test_navigation_action_redirect() {
+        let action = NavigationAction::redirect("/login");
+        assert!(!action.is_continue());
+        assert!(!action.is_deny());
+        assert!(action.is_redirect());
+        assert_eq!(action.redirect_path(), Some("/login"));
+    }
+
+    #[test]
+    fn test_navigation_action_redirect_with_reason() {
+        let action = NavigationAction::redirect_with_reason("/login", "Auth required");
+        match action {
+            NavigationAction::Redirect { to, reason } => {
+                assert_eq!(to, "/login");
+                assert_eq!(reason, Some("Auth required".to_string()));
+            }
+            _ => panic!("Expected Redirect"),
+        }
+    }
+
+    #[test]
+    fn test_navigation_action_equality() {
+        assert_eq!(NavigationAction::Continue, NavigationAction::Continue);
+        assert_ne!(NavigationAction::Continue, NavigationAction::deny("x"));
+    }
+
+    // --- RouteLifecycle tests ---
 
     struct TestLifecycle {
         should_abort: bool,
@@ -138,115 +244,80 @@ mod tests {
     }
 
     impl RouteLifecycle for TestLifecycle {
-        type Future = Pin<Box<dyn Future<Output = LifecycleResult> + Send>>;
-
-        fn on_enter(&self, _cx: &App, _request: &NavigationRequest) -> Self::Future {
+        fn on_enter(&self, _cx: &App, _request: &NavigationRequest) -> NavigationAction {
             if self.should_abort {
-                Box::pin(async { LifecycleResult::abort("Test abort") })
+                NavigationAction::deny("Test abort")
             } else if self.should_redirect {
-                Box::pin(async { LifecycleResult::redirect("/redirect") })
+                NavigationAction::redirect("/redirect")
             } else {
-                Box::pin(async { LifecycleResult::Continue })
+                NavigationAction::Continue
             }
         }
 
-        fn on_exit(&self, _cx: &App) -> Self::Future {
-            Box::pin(async { LifecycleResult::Continue })
+        fn on_exit(&self, _cx: &App) -> NavigationAction {
+            NavigationAction::Continue
         }
 
-        fn can_deactivate(&self, _cx: &App) -> Self::Future {
+        fn can_deactivate(&self, _cx: &App) -> NavigationAction {
             if self.should_abort {
-                Box::pin(async { LifecycleResult::abort("Cannot leave") })
+                NavigationAction::deny("Cannot leave")
             } else {
-                Box::pin(async { LifecycleResult::Continue })
+                NavigationAction::Continue
             }
         }
     }
 
     #[gpui::test]
-    fn test_lifecycle_result_continue(_cx: &mut TestAppContext) {
-        let result = LifecycleResult::Continue;
-        assert!(result.allows_continue());
-        assert!(!result.is_abort());
-        assert!(!result.is_redirect());
-    }
-
-    #[gpui::test]
-    fn test_lifecycle_result_abort(_cx: &mut TestAppContext) {
-        let result = LifecycleResult::abort("Test");
-        assert!(!result.allows_continue());
-        assert!(result.is_abort());
-        assert!(!result.is_redirect());
-    }
-
-    #[gpui::test]
-    fn test_lifecycle_result_redirect(_cx: &mut TestAppContext) {
-        let result = LifecycleResult::redirect("/test");
-        assert!(!result.allows_continue());
-        assert!(!result.is_abort());
-        assert!(result.is_redirect());
-    }
-
-    #[gpui::test]
-    fn test_lifecycle_on_enter_continue(cx: &mut TestAppContext) {
+    fn test_lifecycle_on_enter_continue(cx: &mut gpui::TestAppContext) {
         let lifecycle = TestLifecycle {
             should_abort: false,
             should_redirect: false,
         };
         let request = NavigationRequest::new("/test".to_string());
-
-        let result = cx.update(|cx| pollster::block_on(lifecycle.on_enter(cx, &request)));
-
-        assert_eq!(result, LifecycleResult::Continue);
+        let result = cx.update(|cx| lifecycle.on_enter(cx, &request));
+        assert_eq!(result, NavigationAction::Continue);
     }
 
     #[gpui::test]
-    fn test_lifecycle_on_enter_abort(cx: &mut TestAppContext) {
+    fn test_lifecycle_on_enter_abort(cx: &mut gpui::TestAppContext) {
         let lifecycle = TestLifecycle {
             should_abort: true,
             should_redirect: false,
         };
         let request = NavigationRequest::new("/test".to_string());
-
-        let result = cx.update(|cx| pollster::block_on(lifecycle.on_enter(cx, &request)));
-
-        assert!(result.is_abort());
+        let result = cx.update(|cx| lifecycle.on_enter(cx, &request));
+        assert!(result.is_deny());
     }
 
     #[gpui::test]
-    fn test_lifecycle_on_enter_redirect(cx: &mut TestAppContext) {
+    fn test_lifecycle_on_enter_redirect(cx: &mut gpui::TestAppContext) {
         let lifecycle = TestLifecycle {
             should_abort: false,
             should_redirect: true,
         };
         let request = NavigationRequest::new("/test".to_string());
-
-        let result = cx.update(|cx| pollster::block_on(lifecycle.on_enter(cx, &request)));
-
+        let result = cx.update(|cx| lifecycle.on_enter(cx, &request));
         assert!(result.is_redirect());
+        assert_eq!(result.redirect_path(), Some("/redirect"));
     }
 
     #[gpui::test]
-    fn test_lifecycle_can_deactivate_allow(cx: &mut TestAppContext) {
+    fn test_lifecycle_can_deactivate_allow(cx: &mut gpui::TestAppContext) {
         let lifecycle = TestLifecycle {
             should_abort: false,
             should_redirect: false,
         };
-
-        let result = cx.update(|cx| pollster::block_on(lifecycle.can_deactivate(cx)));
-
-        assert_eq!(result, LifecycleResult::Continue);
+        let result = cx.update(|cx| lifecycle.can_deactivate(cx));
+        assert_eq!(result, NavigationAction::Continue);
     }
 
     #[gpui::test]
-    fn test_lifecycle_can_deactivate_block(cx: &mut TestAppContext) {
+    fn test_lifecycle_can_deactivate_block(cx: &mut gpui::TestAppContext) {
         let lifecycle = TestLifecycle {
             should_abort: true,
             should_redirect: false,
         };
-
-        let result = cx.update(|cx| pollster::block_on(lifecycle.can_deactivate(cx)));
-
-        assert!(result.is_abort());
+        let result = cx.update(|cx| lifecycle.can_deactivate(cx));
+        assert!(result.is_deny());
     }
 }

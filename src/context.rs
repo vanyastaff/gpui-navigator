@@ -1,15 +1,25 @@
-//! Router context integration for GPUI
+//! Router context integration for GPUI.
 //!
 //! This module provides the global router state management through GPUI's context system.
-//! It exposes the `Navigator` API for navigation operations and manages router lifecycle.
+//! It exposes the [`Navigator`] API for navigation operations and manages the full
+//! navigation pipeline including guards, middleware, and lifecycle hooks.
 
 #[cfg(feature = "cache")]
 use crate::cache::{CacheStats, RouteCache};
+use crate::error::NavigationResult;
+#[cfg(feature = "guard")]
+use crate::lifecycle::NavigationAction;
+use crate::resolve::{resolve_match_stack, MatchStack};
 use crate::route::NamedRouteRegistry;
 #[cfg(feature = "transition")]
 use crate::transition::Transition;
-use crate::{IntoRoute, Route, RouteChangeEvent, RouteParams, RouterState};
+use crate::{IntoRoute, Route, RouteParams, RouterState};
 use gpui::{App, BorrowAppContext, Global};
+use std::borrow::BorrowMut;
+use std::sync::Arc;
+
+/// Maximum redirect depth to prevent infinite redirect loops.
+const MAX_REDIRECT_DEPTH: usize = 5;
 
 // ============================================================================
 // NavigationRequest
@@ -17,7 +27,8 @@ use gpui::{App, BorrowAppContext, Global};
 
 /// Request for navigation.
 ///
-/// Contains information about the navigation being performed.
+/// Contains information about the navigation being performed, passed to guards
+/// and middleware so they can inspect the source and destination.
 ///
 /// # Example
 ///
@@ -39,7 +50,7 @@ pub struct NavigationRequest {
 }
 
 impl NavigationRequest {
-    /// Create a new navigation request
+    /// Create a new navigation request.
     pub fn new(to: String) -> Self {
         Self {
             from: None,
@@ -48,7 +59,7 @@ impl NavigationRequest {
         }
     }
 
-    /// Create a navigation request with a source path
+    /// Create a navigation request with a source path.
     pub fn with_from(to: String, from: String) -> Self {
         Self {
             from: Some(from),
@@ -57,7 +68,7 @@ impl NavigationRequest {
         }
     }
 
-    /// Set route parameters
+    /// Set route parameters.
     pub fn with_params(mut self, params: RouteParams) -> Self {
         self.params = params;
         self
@@ -78,25 +89,35 @@ impl std::fmt::Debug for NavigationRequest {
 // GlobalRouter
 // ============================================================================
 
-/// Global router state accessible from any component
+/// Global router state accessible from any component.
+///
+/// This is the central routing object stored as a GPUI global. It holds the
+/// navigation state, route registry, and orchestrates the navigation pipeline
+/// (guards -> middleware -> navigation -> middleware).
 #[derive(Clone)]
 pub struct GlobalRouter {
     state: RouterState,
-    /// Cache for nested route resolution
+    /// Pre-resolved route chain for the current path.
+    /// Built once per navigation, consumed by outlets during render.
+    match_stack: MatchStack,
+    /// Previous match stack — used for transition exit animations.
+    #[cfg(feature = "transition")]
+    previous_stack: Option<MatchStack>,
     #[cfg(feature = "cache")]
     nested_cache: RouteCache,
-    /// Registry for named routes
     named_routes: NamedRouteRegistry,
-    /// Transition override for next navigation
     #[cfg(feature = "transition")]
     next_transition: Option<Transition>,
 }
 
 impl GlobalRouter {
-    /// Create a new global router
+    /// Create a new global router.
     pub fn new() -> Self {
         Self {
             state: RouterState::new(),
+            match_stack: MatchStack::new(),
+            #[cfg(feature = "transition")]
+            previous_stack: None,
             #[cfg(feature = "cache")]
             nested_cache: RouteCache::new(),
             named_routes: NamedRouteRegistry::new(),
@@ -105,191 +126,441 @@ impl GlobalRouter {
         }
     }
 
-    /// Register a route
+    /// Get the pre-resolved match stack for the current path.
+    ///
+    /// Outlets call this during render to find their route by depth index.
+    /// The stack is built once per navigation, so this is O(1).
+    pub fn match_stack(&self) -> &MatchStack {
+        &self.match_stack
+    }
+
+    /// Get the previous match stack (for transition animations).
+    #[cfg(feature = "transition")]
+    pub fn previous_stack(&self) -> Option<&MatchStack> {
+        self.previous_stack.as_ref()
+    }
+
+    /// Re-resolve the match stack after routes change.
+    fn re_resolve(&mut self) {
+        self.match_stack = resolve_match_stack(self.state.routes(), self.state.current_path());
+    }
+
+    /// Register a route.
     pub fn add_route(&mut self, route: Route) {
-        // Register named route if it has a name
         if let Some(name) = &route.config.name {
             self.named_routes
                 .register(name.clone(), route.config.path.clone());
         }
-
         self.state.add_route(route);
-        // Clear cache when routes change
         #[cfg(feature = "cache")]
         self.nested_cache.clear();
+        // Re-resolve match stack after adding routes
+        self.re_resolve();
     }
 
-    /// Navigate to a named route with parameters
-    pub fn push_named(&mut self, name: &str, params: &RouteParams) -> Option<RouteChangeEvent> {
+    // ========================================================================
+    // Navigation pipeline
+    // ========================================================================
+
+    /// Navigate to a path, running the full guard/middleware pipeline.
+    ///
+    /// Pipeline:
+    /// 1. Collect guards from matched route (+ ancestors)
+    /// 2. Check guards — if any denies/redirects, navigation is blocked
+    /// 3. Run `before_navigation` middleware
+    /// 4. Perform actual navigation
+    /// 5. Run `after_navigation` middleware
+    pub fn push(&mut self, path: String, cx: &App) -> NavigationResult {
+        self.navigate_with_pipeline(path, cx, NavigateOp::Push, 0)
+    }
+
+    /// Replace current path, running the full guard/middleware pipeline.
+    pub fn replace(&mut self, path: String, cx: &App) -> NavigationResult {
+        self.navigate_with_pipeline(path, cx, NavigateOp::Replace, 0)
+    }
+
+    /// Go back in history, checking guards on the target route.
+    pub fn back(&mut self, cx: &App) -> Option<NavigationResult> {
+        let target = self.state.peek_back_path()?.to_string();
+        Some(self.navigate_with_pipeline(target, cx, NavigateOp::Back, 0))
+    }
+
+    /// Go forward in history, checking guards on the target route.
+    pub fn forward(&mut self, cx: &App) -> Option<NavigationResult> {
+        let target = self.state.peek_forward_path()?.to_string();
+        Some(self.navigate_with_pipeline(target, cx, NavigateOp::Forward, 0))
+    }
+
+    /// Core navigation method that runs the full pipeline.
+    fn navigate_with_pipeline(
+        &mut self,
+        path: String,
+        cx: &App,
+        op: NavigateOp,
+        redirect_depth: usize,
+    ) -> NavigationResult {
+        if redirect_depth >= MAX_REDIRECT_DEPTH {
+            return NavigationResult::Blocked {
+                reason: format!(
+                    "Redirect loop detected (depth {}): target '{}'",
+                    redirect_depth, path
+                ),
+                redirect: None,
+            };
+        }
+
+        let request = NavigationRequest::with_from(path.clone(), self.current_path().to_string());
+
+        // Step 1: Run guards
+        #[cfg(feature = "guard")]
+        {
+            let guard_result = self.run_guards(cx, &request);
+            match guard_result {
+                NavigationAction::Continue => {}
+                NavigationAction::Deny { reason } => {
+                    return NavigationResult::Blocked {
+                        reason,
+                        redirect: None,
+                    };
+                }
+                NavigationAction::Redirect { to, reason } => {
+                    crate::debug_log!(
+                        "Guard redirecting from '{}' to '{}': {:?}",
+                        path,
+                        to,
+                        reason
+                    );
+                    return self.navigate_with_pipeline(
+                        to,
+                        cx,
+                        NavigateOp::Push,
+                        redirect_depth + 1,
+                    );
+                }
+            }
+        }
+
+        // Step 2: Run before middleware
+        #[cfg(feature = "middleware")]
+        self.run_middleware_before(cx, &request);
+
+        // Step 3: Perform actual navigation
+        #[cfg(feature = "cache")]
+        self.nested_cache.clear();
+
+        // Save previous stack for transition animations
+        #[cfg(feature = "transition")]
+        {
+            self.previous_stack = Some(self.match_stack.clone());
+        }
+
+        let event = match op {
+            NavigateOp::Push => self.state.push(path),
+            NavigateOp::Replace => self.state.replace(path),
+            NavigateOp::Back => {
+                // We already validated peek_back_path, so unwrap is safe
+                self.state.back().expect("back() should succeed after peek")
+            }
+            NavigateOp::Forward => self
+                .state
+                .forward()
+                .expect("forward() should succeed after peek"),
+        };
+
+        // Resolve match stack immediately after navigation
+        self.match_stack = resolve_match_stack(self.state.routes(), self.state.current_path());
+
+        // Step 4: Run after middleware
+        #[cfg(feature = "middleware")]
+        self.run_middleware_after(cx, &request);
+
+        NavigationResult::Success { path: event.to }
+    }
+
+    /// Collect and run guards for the target path.
+    ///
+    /// Walks the route tree to find the target route, collecting guards from
+    /// every ancestor route along the way. Guards on parent routes also protect
+    /// child routes (e.g. an `AuthGuard` on `/dashboard` also guards `/dashboard/settings`).
+    #[cfg(feature = "guard")]
+    fn run_guards(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
+        let path = request.to.trim_start_matches('/').trim_end_matches('/');
+        let mut guards: Vec<(&dyn crate::guards::RouteGuard, i32)> = Vec::new();
+
+        // Collect guards from matching routes (including ancestor routes)
+        for route in self.state.routes() {
+            Self::collect_guards_recursive(route, path, "", &mut guards);
+        }
+
+        // Sort by priority (higher first)
+        guards.sort_by_key(|(_, prio)| std::cmp::Reverse(*prio));
+
+        // Check each guard — first non-Continue result wins
+        for (guard, _) in &guards {
+            let result = guard.check(cx, request);
+            if !matches!(result, NavigationAction::Continue) {
+                crate::debug_log!(
+                    "Guard '{}' blocked navigation to '{}'",
+                    guard.name(),
+                    request.to
+                );
+                return result;
+            }
+        }
+
+        NavigationAction::Continue
+    }
+
+    /// Recursively walk the route tree, collecting guards from routes that match
+    /// the given path (as exact match or prefix).
+    #[cfg(feature = "guard")]
+    fn collect_guards_recursive<'a>(
+        route: &'a Arc<Route>,
+        path: &str,
+        accumulated: &str,
+        out: &mut Vec<(&'a dyn crate::guards::RouteGuard, i32)>,
+    ) {
+        let route_path = route
+            .config
+            .path
+            .trim_start_matches('/')
+            .trim_end_matches('/');
+
+        let full = if accumulated.is_empty() {
+            route_path.to_string()
+        } else if route_path.is_empty() {
+            accumulated.to_string()
+        } else {
+            format!("{}/{}", accumulated, route_path)
+        };
+
+        // Check if this route's path is a prefix of the target (or exact match).
+        // We also need to handle parameter segments like `:id`.
+        let matches = if full.is_empty() {
+            // Root route matches everything
+            true
+        } else {
+            path_matches_prefix(path, &full)
+        };
+
+        if !matches {
+            return;
+        }
+
+        // Collect this route's guards
+        for guard in &route.guards {
+            out.push((guard.as_ref(), guard.priority()));
+        }
+
+        // Recurse into children
+        for child in route.get_children() {
+            Self::collect_guards_recursive(child, path, &full, out);
+        }
+    }
+
+    /// Run `before_navigation` on all middleware attached to matching routes.
+    #[cfg(feature = "middleware")]
+    fn run_middleware_before(&self, cx: &App, request: &NavigationRequest) {
+        let path = request.to.trim_start_matches('/').trim_end_matches('/');
+        let mut middleware: Vec<(&dyn crate::middleware::RouteMiddleware, i32)> = Vec::new();
+
+        for route in self.state.routes() {
+            Self::collect_middleware_recursive(route, path, "", &mut middleware);
+        }
+
+        // Sort by priority (higher first for before)
+        middleware.sort_by_key(|(_, prio)| std::cmp::Reverse(*prio));
+
+        for (mw, _) in &middleware {
+            mw.before_navigation(cx, request);
+        }
+    }
+
+    /// Run `after_navigation` on all middleware attached to matching routes.
+    #[cfg(feature = "middleware")]
+    fn run_middleware_after(&self, cx: &App, request: &NavigationRequest) {
+        let path = request.to.trim_start_matches('/').trim_end_matches('/');
+        let mut middleware: Vec<(&dyn crate::middleware::RouteMiddleware, i32)> = Vec::new();
+
+        for route in self.state.routes() {
+            Self::collect_middleware_recursive(route, path, "", &mut middleware);
+        }
+
+        // Sort by priority ascending for after (reverse of before — stack-like)
+        middleware.sort_by_key(|(_, prio)| *prio);
+
+        for (mw, _) in &middleware {
+            mw.after_navigation(cx, request);
+        }
+    }
+
+    /// Recursively collect middleware from matching routes.
+    #[cfg(feature = "middleware")]
+    fn collect_middleware_recursive<'a>(
+        route: &'a Arc<Route>,
+        path: &str,
+        accumulated: &str,
+        out: &mut Vec<(&'a dyn crate::middleware::RouteMiddleware, i32)>,
+    ) {
+        let route_path = route
+            .config
+            .path
+            .trim_start_matches('/')
+            .trim_end_matches('/');
+
+        let full = if accumulated.is_empty() {
+            route_path.to_string()
+        } else if route_path.is_empty() {
+            accumulated.to_string()
+        } else {
+            format!("{}/{}", accumulated, route_path)
+        };
+
+        let matches = if full.is_empty() {
+            true
+        } else {
+            path_matches_prefix(path, &full)
+        };
+
+        if !matches {
+            return;
+        }
+
+        for mw in &route.middleware {
+            out.push((mw.as_ref(), mw.priority()));
+        }
+
+        for child in route.get_children() {
+            Self::collect_middleware_recursive(child, path, &full, out);
+        }
+    }
+
+    // ========================================================================
+    // Named routes
+    // ========================================================================
+
+    /// Navigate to a named route with parameters.
+    pub fn push_named(
+        &mut self,
+        name: &str,
+        params: &RouteParams,
+        cx: &App,
+    ) -> Option<NavigationResult> {
         let url = self.named_routes.url_for(name, params)?;
-        Some(self.push(url))
+        Some(self.push(url, cx))
     }
 
-    /// Generate URL for a named route
+    /// Generate URL for a named route.
     pub fn url_for(&self, name: &str, params: &RouteParams) -> Option<String> {
         self.named_routes.url_for(name, params)
     }
 
-    /// Navigate to a path
-    pub fn push(&mut self, path: String) -> RouteChangeEvent {
-        // Clear cache on navigation
-        #[cfg(feature = "cache")]
-        self.nested_cache.clear();
-        self.state.push(path)
-    }
+    // ========================================================================
+    // Accessors
+    // ========================================================================
 
-    /// Replace current path
-    pub fn replace(&mut self, path: String) -> RouteChangeEvent {
-        // Clear cache on navigation
-        #[cfg(feature = "cache")]
-        self.nested_cache.clear();
-        self.state.replace(path)
-    }
-
-    /// Go back
-    pub fn back(&mut self) -> Option<RouteChangeEvent> {
-        // Clear cache on navigation
-        #[cfg(feature = "cache")]
-        self.nested_cache.clear();
-        self.state.back()
-    }
-
-    /// Go forward
-    pub fn forward(&mut self) -> Option<RouteChangeEvent> {
-        // Clear cache on navigation
-        #[cfg(feature = "cache")]
-        self.nested_cache.clear();
-        self.state.forward()
-    }
-
-    /// Get current path
+    /// Get current path.
     pub fn current_path(&self) -> &str {
         self.state.current_path()
     }
 
-    /// Get current route match (with caching, requires mutable)
+    /// Get current route match (with caching, requires mutable).
     pub fn current_match(&mut self) -> Option<crate::RouteMatch> {
         self.state.current_match()
     }
 
-    /// Get current route match (immutable, no caching)
-    ///
-    /// Use this from Render implementations and other immutable contexts
+    /// Get current route match (immutable, no caching).
     pub fn current_match_immutable(&self) -> Option<crate::RouteMatch> {
         self.state.current_match_immutable()
     }
 
-    /// Get the current matched Route
-    ///
-    /// Returns the shared `Arc<Route>` that matched the current path.
-    /// Useful for accessing the route's children and builder without cloning.
-    pub fn current_route(&self) -> Option<&std::sync::Arc<crate::route::Route>> {
+    /// Get the current matched Route.
+    pub fn current_route(&self) -> Option<&Arc<crate::route::Route>> {
         self.state.current_route()
     }
 
-    /// Check if can go back
+    /// Check if can go back.
     pub fn can_go_back(&self) -> bool {
         self.state.can_go_back()
     }
 
-    /// Check if can go forward
+    /// Check if can go forward.
     pub fn can_go_forward(&self) -> bool {
         self.state.can_go_forward()
     }
 
-    /// Get mutable state reference
+    /// Get mutable state reference.
     pub fn state_mut(&mut self) -> &mut RouterState {
         &mut self.state
     }
 
-    /// Get state reference
+    /// Get state reference.
     pub fn state(&self) -> &RouterState {
         &self.state
     }
 
-    /// Get nested route cache (mutable)
+    /// Get nested route cache (mutable).
     #[cfg(feature = "cache")]
     pub fn nested_cache_mut(&mut self) -> &mut RouteCache {
         &mut self.nested_cache
     }
 
-    /// Get nested route cache statistics
+    /// Get nested route cache statistics.
     #[cfg(feature = "cache")]
     pub fn cache_stats(&self) -> &CacheStats {
         self.nested_cache.stats()
     }
 
-    /// Set transition for the next navigation
-    ///
-    /// This override will be used for the next push/replace operation,
-    /// then automatically cleared.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use gpui_navigator::{GlobalRouter, Transition};
-    ///
-    /// cx.update_global::<GlobalRouter, _>(|router, _| {
-    ///     router.set_next_transition(Transition::fade(300));
-    ///     router.push("/page".to_string());
-    /// });
-    /// ```
+    // ========================================================================
+    // Transitions
+    // ========================================================================
+
+    /// Set transition for the next navigation.
     #[cfg(feature = "transition")]
     pub fn set_next_transition(&mut self, transition: Transition) {
         self.next_transition = Some(transition);
     }
 
-    /// Get and consume the next transition override
-    ///
-    /// Returns the transition override if set, and clears it.
-    /// Used internally by navigation methods.
+    /// Get and consume the next transition override.
     #[cfg(feature = "transition")]
     pub fn take_next_transition(&mut self) -> Option<Transition> {
         self.next_transition.take()
     }
 
-    /// Check if there's a transition override set
+    /// Check if there's a transition override set.
     #[cfg(feature = "transition")]
     pub fn has_next_transition(&self) -> bool {
         self.next_transition.is_some()
     }
 
-    /// Clear transition override without consuming it
+    /// Clear transition override.
     #[cfg(feature = "transition")]
     pub fn clear_next_transition(&mut self) {
         self.next_transition = None;
     }
 
-    /// Navigate with a specific transition
-    ///
-    /// Convenience method that sets the transition and navigates in one call.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use gpui_navigator::{GlobalRouter, Transition};
-    ///
-    /// cx.update_global::<GlobalRouter, _>(|router, _| {
-    ///     router.push_with_transition("/page".to_string(), Transition::slide_left(300));
-    /// });
-    /// ```
+    /// Navigate with a specific transition.
     #[cfg(feature = "transition")]
     pub fn push_with_transition(
         &mut self,
         path: String,
         transition: Transition,
-    ) -> RouteChangeEvent {
+        cx: &App,
+    ) -> NavigationResult {
         self.set_next_transition(transition);
-        self.push(path)
+        self.push(path, cx)
     }
 
-    /// Replace with a specific transition
+    /// Replace with a specific transition.
     #[cfg(feature = "transition")]
     pub fn replace_with_transition(
         &mut self,
         path: String,
         transition: Transition,
-    ) -> RouteChangeEvent {
+        cx: &App,
+    ) -> NavigationResult {
         self.set_next_transition(transition);
-        self.replace(path)
+        self.replace(path, cx)
     }
 }
 
@@ -301,12 +572,61 @@ impl Default for GlobalRouter {
 
 impl Global for GlobalRouter {}
 
-/// Trait for accessing the global router from context
+// ============================================================================
+// Helper: path prefix matching with parameter support
+// ============================================================================
+
+/// Check if `path` matches `prefix` as a route prefix (supports `:param` segments).
+///
+/// Examples:
+/// - `path_matches_prefix("dashboard/settings", "dashboard")` → true
+/// - `path_matches_prefix("dashboard", "dashboard")` → true
+/// - `path_matches_prefix("users/123", "users/:id")` → true
+/// - `path_matches_prefix("other", "dashboard")` → false
+fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+    let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let prefix_segs: Vec<&str> = prefix.split('/').filter(|s| !s.is_empty()).collect();
+
+    if path_segs.len() < prefix_segs.len() {
+        return false;
+    }
+
+    for (ps, pfs) in path_segs.iter().zip(prefix_segs.iter()) {
+        if pfs.starts_with(':') {
+            // Parameter segment matches anything
+            continue;
+        }
+        if ps != pfs {
+            return false;
+        }
+    }
+
+    true
+}
+
+// ============================================================================
+// Navigation operation type
+// ============================================================================
+
+/// Internal enum for the kind of navigation to perform after pipeline checks.
+#[derive(Debug, Clone, Copy)]
+enum NavigateOp {
+    Push,
+    Replace,
+    Back,
+    Forward,
+}
+
+// ============================================================================
+// UseRouter trait
+// ============================================================================
+
+/// Trait for accessing the global router from context.
 pub trait UseRouter {
-    /// Get reference to global router
+    /// Get reference to global router.
     fn router(&self) -> &GlobalRouter;
 
-    /// Update global router
+    /// Update global router.
     fn update_router<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut GlobalRouter, &mut App) -> R;
@@ -325,21 +645,21 @@ impl UseRouter for App {
     }
 }
 
-/// Initialize global router with routes
+// ============================================================================
+// init_router
+// ============================================================================
+
+/// Initialize global router with routes.
 ///
 /// # Example
 ///
 /// ```ignore
 /// use gpui_navigator::{init_router, Route};
 ///
-/// fn main() {
-///     App::new().run(|cx| {
-///         init_router(cx, |router| {
-///             router.add_route(Route::new("/", |_, _cx, _params| gpui::div().into_any_element()));
-///             router.add_route(Route::new("/users/:id", |_, _cx, _params| gpui::div().into_any_element()));
-///         });
-///     });
-/// }
+/// init_router(cx, |router| {
+///     router.add_route(Route::new("/", |_, _cx, _params| gpui::div()));
+///     router.add_route(Route::new("/users/:id", |_, _cx, _params| gpui::div()));
+/// });
 /// ```
 pub fn init_router<F>(cx: &mut App, configure: F)
 where
@@ -350,276 +670,180 @@ where
     cx.set_global(router);
 }
 
-/// Navigate to a path using global router
-///
-/// # Example
-///
-/// ```ignore
-/// use gpui_navigator::navigate;
-///
-/// // In any component with access to App
-/// navigate(cx, "/users/123");
-/// ```
+/// Navigate to a path using global router.
 pub fn navigate(cx: &mut App, path: impl Into<String>) {
-    cx.update_router(|router, _cx| {
-        router.push(path.into());
+    let path = path.into();
+    cx.update_global::<GlobalRouter, _>(|router, cx| {
+        router.push(path, cx);
     });
 }
 
-/// Get current path from global router
+/// Get current path from global router.
 pub fn current_path(cx: &App) -> String {
     cx.router().current_path().to_string()
 }
 
-/// Handle for Navigator.of(context) pattern
+// ============================================================================
+// NavigatorHandle
+// ============================================================================
+
+/// Handle for `Navigator::of(cx)` pattern.
 ///
 /// Provides instance methods for chained navigation calls.
 pub struct NavigatorHandle<'a, C: BorrowAppContext> {
     cx: &'a mut C,
 }
 
-impl<C: BorrowAppContext> NavigatorHandle<'_, C> {
-    /// Navigate to a new path
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, PageRoute};
-    ///
-    /// // Simple path
-    /// Navigator::of(cx).push("/users");
-    ///
-    /// // With PageRoute
-    /// Navigator::of(cx).push(PageRoute::builder("/users/:id", |_, _cx, _params| gpui::div())
-    ///     .with_param("id".into(), "123".into()));
-    /// ```
+impl<C: BorrowAppContext + BorrowMut<App>> NavigatorHandle<'_, C> {
+    /// Navigate to a new path.
     pub fn push(self, route: impl IntoRoute) -> Self {
         let descriptor = route.into_route();
-        self.cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.push(descriptor.path);
+        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.push(descriptor.path, app);
         });
         self
     }
 
-    /// Replace current path without adding to history
+    /// Replace current path without adding to history.
     pub fn replace(self, route: impl IntoRoute) -> Self {
         let descriptor = route.into_route();
-        self.cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.replace(descriptor.path);
+        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.replace(descriptor.path, app);
         });
         self
     }
 
-    /// Go back to the previous route
+    /// Go back to the previous route.
     pub fn pop(self) -> Self {
-        self.cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.back();
+        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.back(app);
         });
         self
     }
 
-    /// Go forward in history
+    /// Go forward in history.
     pub fn forward(self) -> Self {
-        self.cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.forward();
+        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.forward(app);
         });
         self
     }
 }
 
-/// Navigation API for convenient route navigation
+// ============================================================================
+// Navigator
+// ============================================================================
+
+/// Navigation API for convenient route navigation.
 ///
 /// Provides static methods for navigation operations:
-/// - `Navigator::push(cx, "/path")` - Navigate to a new page
-/// - `Navigator::pop(cx)` - Go back to previous page
-/// - `Navigator::replace(cx, "/path")` - Replace current page
+/// - `Navigator::push(cx, "/path")` — Navigate to a new page
+/// - `Navigator::pop(cx)` — Go back to previous page
+/// - `Navigator::replace(cx, "/path")` — Replace current page
 ///
-/// Works with any context that has access to App (`Context<V>`, `App`, etc.)
+/// All navigation methods run the full pipeline (guards, middleware).
 ///
 /// # Example
 ///
 /// ```ignore
 /// use gpui_navigator::Navigator;
 ///
-/// // Navigate to a new route
 /// Navigator::push(cx, "/users/123");
-///
-/// // Go back
 /// Navigator::pop(cx);
-///
-/// // Replace current route
 /// Navigator::replace(cx, "/login");
 /// ```
 pub struct Navigator;
 
 impl Navigator {
-    /// Get a NavigatorHandle for the given context
-    ///
-    /// This allows chained navigation calls:
-    /// ```ignore
-    /// use gpui_navigator::Navigator;
-    ///
-    /// // Chained style
-    /// Navigator::of(cx).push("/users");
-    /// Navigator::of(cx).pop();
-    ///
-    /// // Or direct style (also works)
-    /// Navigator::push(cx, "/users");
-    /// Navigator::pop(cx);
-    /// ```
-    pub fn of<C: BorrowAppContext>(cx: &mut C) -> NavigatorHandle<'_, C> {
+    /// Get a [`NavigatorHandle`] for chained navigation calls.
+    pub fn of<C: BorrowAppContext + BorrowMut<App>>(cx: &mut C) -> NavigatorHandle<'_, C> {
         NavigatorHandle { cx }
     }
 
-    /// Navigate to a new path
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, PageRoute};
-    ///
-    /// // Simple string path
-    /// Navigator::push(cx, "/users/123");
-    ///
-    /// // With PageRoute and params
-    /// Navigator::push(cx, PageRoute::builder("/profile", |_, _cx, _params| gpui::div())
-    ///     .with_param("userId".into(), "456".into()));
-    /// ```
-    pub fn push(cx: &mut impl BorrowAppContext, route: impl IntoRoute) {
+    /// Navigate to a new path.
+    pub fn push(cx: &mut (impl BorrowAppContext + BorrowMut<App>), route: impl IntoRoute) {
         let descriptor = route.into_route();
         crate::debug_log!("Navigator::push: pushing path '{}'", descriptor.path);
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.push(descriptor.path);
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.push(descriptor.path, app);
         });
     }
 
-    /// Replace current path without adding to history
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, PageRoute};
-    ///
-    /// // Simple string path
-    /// Navigator::replace(cx, "/login");
-    ///
-    /// // With PageRoute
-    /// Navigator::replace(cx, PageRoute::builder("/login", |_, _cx, _params| gpui::div())
-    ///     .with_param("redirect".into(), "/dashboard".into()));
-    /// ```
-    pub fn replace(cx: &mut impl BorrowAppContext, route: impl IntoRoute) {
+    /// Replace current path without adding to history.
+    pub fn replace(cx: &mut (impl BorrowAppContext + BorrowMut<App>), route: impl IntoRoute) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.replace(descriptor.path);
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.replace(descriptor.path, app);
         });
     }
 
-    /// Go back to the previous route
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::Navigator;
-    ///
-    /// if Navigator::can_pop(cx) {
-    ///     Navigator::pop(cx);
-    /// }
-    /// ```
-    pub fn pop(cx: &mut impl BorrowAppContext) {
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.back();
+    /// Go back to the previous route.
+    pub fn pop(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) {
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.back(app);
         });
     }
 
-    /// Alias for pop() - go back (kept for compatibility)
-    pub fn back(cx: &mut impl BorrowAppContext) {
+    /// Alias for [`pop`](Navigator::pop).
+    pub fn back(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) {
         Self::pop(cx);
     }
 
-    /// Go forward in history
-    pub fn forward(cx: &mut impl BorrowAppContext) {
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.forward();
+    /// Go forward in history.
+    pub fn forward(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) {
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.forward(app);
         });
     }
 
-    /// Get current path
-    ///
-    /// Works with `Context<V>` since it derefs to App
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::Navigator;
-    ///
-    /// let path = Navigator::current_path(cx);
-    /// ```
+    /// Get current path.
     pub fn current_path(cx: &App) -> String {
         cx.global::<GlobalRouter>().current_path().to_string()
     }
 
-    /// Check if can go back
+    /// Check if can go back.
     pub fn can_pop(cx: &App) -> bool {
         cx.global::<GlobalRouter>().can_go_back()
     }
 
-    /// Alias for can_pop() - check if can go back (kept for compatibility)
+    /// Alias for [`can_pop`](Navigator::can_pop).
     pub fn can_go_back(cx: &App) -> bool {
         Self::can_pop(cx)
     }
 
-    /// Navigate to a named route with parameters
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, RouteParams};
-    ///
-    /// let mut params = RouteParams::new();
-    /// params.set("id".into(), "123".into());
-    ///
-    /// Navigator::push_named(cx, "user.detail", &params);
-    /// ```
-    pub fn push_named(cx: &mut impl BorrowAppContext, name: &str, params: &RouteParams) {
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.push_named(name, params);
-        });
-    }
-
-    /// Generate URL for a named route
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, RouteParams};
-    ///
-    /// let mut params = RouteParams::new();
-    /// params.set("id".into(), "123".into());
-    ///
-    /// let url = Navigator::url_for(cx, "user.detail", &params);
-    /// assert_eq!(url, Some("/users/123".to_string()));
-    /// ```
-    pub fn url_for(cx: &App, name: &str, params: &RouteParams) -> Option<String> {
-        cx.global::<GlobalRouter>().url_for(name, params)
-    }
-
-    /// Check if can go forward
+    /// Check if can go forward.
     pub fn can_go_forward(cx: &App) -> bool {
         cx.global::<GlobalRouter>().can_go_forward()
     }
 
-    /// Set transition for the next navigation
-    ///
-    /// The transition will be used for the next push/replace call,
-    /// then automatically cleared.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, Transition};
-    ///
-    /// Navigator::set_next_transition(cx, Transition::fade(300));
-    /// Navigator::push(cx, "/page");
-    /// ```
+    /// Navigate to a named route with parameters.
+    pub fn push_named(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+        name: &str,
+        params: &RouteParams,
+    ) {
+        let name = name.to_string();
+        let params = params.clone();
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.push_named(&name, &params, app);
+        });
+    }
+
+    /// Generate URL for a named route.
+    pub fn url_for(cx: &App, name: &str, params: &RouteParams) -> Option<String> {
+        cx.global::<GlobalRouter>().url_for(name, params)
+    }
+
+    /// Set transition for the next navigation.
     #[cfg(feature = "transition")]
     pub fn set_next_transition(cx: &mut impl BorrowAppContext, transition: Transition) {
         cx.update_global::<GlobalRouter, _>(|router, _| {
@@ -627,74 +851,55 @@ impl Navigator {
         });
     }
 
-    /// Navigate with a specific transition
-    ///
-    /// # Example
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, Transition};
-    ///
-    /// Navigator::push_with_transition(cx, "/page", Transition::slide_left(300));
-    /// ```
+    /// Navigate with a specific transition.
     #[cfg(feature = "transition")]
     pub fn push_with_transition(
-        cx: &mut impl BorrowAppContext,
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
         route: impl IntoRoute,
         transition: Transition,
     ) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.push_with_transition(descriptor.path, transition);
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.push_with_transition(descriptor.path, transition, app);
         });
     }
 
-    /// Replace with a specific transition
-    ///
-    /// # Example
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, Transition};
-    ///
-    /// Navigator::replace_with_transition(cx, "/page", Transition::fade(200));
-    /// ```
+    /// Replace with a specific transition.
     #[cfg(feature = "transition")]
     pub fn replace_with_transition(
-        cx: &mut impl BorrowAppContext,
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
         route: impl IntoRoute,
         transition: Transition,
     ) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, _| {
-            router.replace_with_transition(descriptor.path, transition);
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.replace_with_transition(descriptor.path, transition, app);
         });
     }
 
-    /// Push named route with a specific transition
-    ///
-    /// # Example
-    /// ```ignore
-    /// use gpui_navigator::{Navigator, RouteParams, Transition};
-    ///
-    /// let mut params = RouteParams::new();
-    /// params.set("id".to_string(), "123".to_string());
-    /// Navigator::push_named_with_transition(
-    ///     cx,
-    ///     "user.detail",
-    ///     &params,
-    ///     Transition::slide_right(300)
-    /// );
-    /// ```
+    /// Push named route with a specific transition.
     #[cfg(feature = "transition")]
     pub fn push_named_with_transition(
-        cx: &mut impl BorrowAppContext,
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
         name: &str,
         params: &RouteParams,
         transition: Transition,
     ) {
-        cx.update_global::<GlobalRouter, _>(|router, _| {
+        let name = name.to_string();
+        let params = params.clone();
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
             router.set_next_transition(transition);
-            router.push_named(name, params);
+            router.push_named(&name, &params, app);
         });
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -703,7 +908,6 @@ mod tests {
 
     #[gpui::test]
     fn test_nav_push(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -718,30 +922,18 @@ mod tests {
             });
         });
 
-        // Test initial state
         let initial_path = cx.read(Navigator::current_path);
         assert_eq!(initial_path, "/");
 
-        // Test push navigation
-        cx.update(|cx| {
-            Navigator::push(cx, "/users");
-        });
+        cx.update(|cx| Navigator::push(cx, "/users"));
+        assert_eq!(cx.read(Navigator::current_path), "/users");
 
-        let current_path = cx.read(Navigator::current_path);
-        assert_eq!(current_path, "/users");
-
-        // Test push with parameters
-        cx.update(|cx| {
-            Navigator::push(cx, "/users/123");
-        });
-
-        let current_path = cx.read(Navigator::current_path);
-        assert_eq!(current_path, "/users/123");
+        cx.update(|cx| Navigator::push(cx, "/users/123"));
+        assert_eq!(cx.read(Navigator::current_path), "/users/123");
     }
 
     #[gpui::test]
     fn test_nav_back_forward(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -756,7 +948,6 @@ mod tests {
             });
         });
 
-        // Navigate to multiple pages
         cx.update(|cx| {
             Navigator::push(cx, "/page1");
             Navigator::push(cx, "/page2");
@@ -765,27 +956,18 @@ mod tests {
         assert_eq!(cx.read(Navigator::current_path), "/page2");
         assert!(cx.read(Navigator::can_pop));
 
-        // Test back navigation
-        cx.update(|cx| {
-            Navigator::pop(cx);
-        });
-
+        cx.update(|cx| Navigator::pop(cx));
         assert_eq!(cx.read(Navigator::current_path), "/page1");
         assert!(cx.read(Navigator::can_pop));
         assert!(cx.read(Navigator::can_go_forward));
 
-        // Test forward navigation
-        cx.update(|cx| {
-            Navigator::forward(cx);
-        });
-
+        cx.update(|cx| Navigator::forward(cx));
         assert_eq!(cx.read(Navigator::current_path), "/page2");
         assert!(!cx.read(Navigator::can_go_forward));
     }
 
     #[gpui::test]
     fn test_nav_replace(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -800,7 +982,6 @@ mod tests {
             });
         });
 
-        // Navigate and then replace
         cx.update(|cx| {
             Navigator::push(cx, "/login");
             Navigator::replace(cx, "/home");
@@ -808,17 +989,12 @@ mod tests {
 
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
-        // After replace, going back should skip the replaced route
-        cx.update(|cx| {
-            Navigator::pop(cx);
-        });
-
+        cx.update(|cx| Navigator::pop(cx));
         assert_eq!(cx.read(Navigator::current_path), "/");
     }
 
     #[gpui::test]
     fn test_nav_can_go_back_boundaries(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -827,27 +1003,17 @@ mod tests {
             });
         });
 
-        // At initial state, can't go back
         assert!(!cx.read(Navigator::can_pop));
 
-        // After navigation, can go back
-        cx.update(|cx| {
-            Navigator::push(cx, "/page1");
-        });
-
+        cx.update(|cx| Navigator::push(cx, "/page1"));
         assert!(cx.read(Navigator::can_pop));
 
-        // After going back, can't go back further
-        cx.update(|cx| {
-            Navigator::pop(cx);
-        });
-
+        cx.update(|cx| Navigator::pop(cx));
         assert!(!cx.read(Navigator::can_pop));
     }
 
     #[gpui::test]
     fn test_nav_multiple_pushes(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -865,7 +1031,6 @@ mod tests {
             });
         });
 
-        // Navigate through multiple pages
         cx.update(|cx| {
             Navigator::push(cx, "/step1");
             Navigator::push(cx, "/step2");
@@ -874,26 +1039,18 @@ mod tests {
 
         assert_eq!(cx.read(Navigator::current_path), "/step3");
 
-        // Go back multiple times
-        cx.update(|cx| {
-            Navigator::pop(cx);
-        });
+        cx.update(|cx| Navigator::pop(cx));
         assert_eq!(cx.read(Navigator::current_path), "/step2");
 
-        cx.update(|cx| {
-            Navigator::pop(cx);
-        });
+        cx.update(|cx| Navigator::pop(cx));
         assert_eq!(cx.read(Navigator::current_path), "/step1");
 
-        cx.update(|cx| {
-            Navigator::pop(cx);
-        });
+        cx.update(|cx| Navigator::pop(cx));
         assert_eq!(cx.read(Navigator::current_path), "/");
     }
 
     #[gpui::test]
     fn test_nav_with_route_parameters(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -909,23 +1066,15 @@ mod tests {
             });
         });
 
-        // Navigate to routes with parameters
-        cx.update(|cx| {
-            Navigator::push(cx, "/users/42");
-        });
-
+        cx.update(|cx| Navigator::push(cx, "/users/42"));
         assert_eq!(cx.read(Navigator::current_path), "/users/42");
 
-        cx.update(|cx| {
-            Navigator::push(cx, "/posts/123/comments/456");
-        });
-
+        cx.update(|cx| Navigator::push(cx, "/posts/123/comments/456"));
         assert_eq!(cx.read(Navigator::current_path), "/posts/123/comments/456");
     }
 
     #[gpui::test]
-    fn test_navigator_api_style(cx: &mut TestAppContext) {
-        // Initialize router
+    fn test_navigator_of_style(cx: &mut TestAppContext) {
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -940,86 +1089,31 @@ mod tests {
             });
         });
 
-        // Test Flutter-style Navigator.of(context).push()
         cx.update(|cx| {
             Navigator::of(cx).push("/home");
         });
-
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
-        // Test chaining
         cx.update(|cx| {
             Navigator::of(cx).push("/profile").pop();
         });
-
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
-        // Test replace
         cx.update(|cx| {
             Navigator::of(cx).replace("/profile");
         });
-
         assert_eq!(cx.read(Navigator::current_path), "/profile");
 
-        // After replace, we're still at index 1 in history, so we can still go back to "/"
         assert!(cx.read(Navigator::can_pop));
-
-        // Pop back to "/"
         cx.update(|cx| {
             Navigator::of(cx).pop();
         });
-
         assert_eq!(cx.read(Navigator::current_path), "/");
-
-        // Now we're at the root, can't go back anymore
         assert!(!cx.read(Navigator::can_pop));
     }
 
     #[gpui::test]
-    fn test_material_route_with_params(cx: &mut TestAppContext) {
-        use crate::PageRoute;
-
-        // Initialize router
-        cx.update(|cx| {
-            init_router(cx, |router| {
-                router.add_route(Route::new("/", |_, _cx, _params| {
-                    gpui::div().into_any_element()
-                }));
-                router.add_route(Route::new("/users/:id", |_, _cx, _params| {
-                    gpui::div().into_any_element()
-                }));
-            });
-        });
-
-        // Test PageRoute with params
-        cx.update(|cx| {
-            Navigator::push(
-                cx,
-                PageRoute::builder("/users/:id", |_, _cx, _params| {
-                    gpui::div().into_any_element()
-                })
-                .with_param("id", "123"),
-            );
-        });
-
-        assert_eq!(cx.read(Navigator::current_path), "/users/:id");
-
-        // Test with Navigator.of() style
-        cx.update(|cx| {
-            Navigator::of(cx).push(
-                PageRoute::builder("/users/:id", |_, _cx, _params| {
-                    gpui::div().into_any_element()
-                })
-                .with_param("id", "456"),
-            );
-        });
-
-        assert_eq!(cx.read(Navigator::current_path), "/users/:id");
-    }
-
-    #[gpui::test]
     fn test_string_into_route(cx: &mut TestAppContext) {
-        // Initialize router
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
@@ -1031,67 +1125,227 @@ mod tests {
             });
         });
 
-        // Test that strings still work with IntoRoute
-        cx.update(|cx| {
-            Navigator::push(cx, "/home");
-        });
-
+        cx.update(|cx| Navigator::push(cx, "/home"));
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
-        // Test with &str
-        cx.update(|cx| {
-            let path = "/home";
-            Navigator::push(cx, path);
-        });
-
-        assert_eq!(cx.read(Navigator::current_path), "/home");
-
-        // Test String
-        cx.update(|cx| {
-            Navigator::push(cx, String::from("/home"));
-        });
-
+        cx.update(|cx| Navigator::push(cx, String::from("/home")));
         assert_eq!(cx.read(Navigator::current_path), "/home");
     }
 
+    // ========================================================================
+    // Guard integration tests
+    // ========================================================================
+
     #[gpui::test]
-    fn test_both_api_styles(cx: &mut TestAppContext) {
-        // Initialize router
+    #[cfg(feature = "guard")]
+    fn test_guard_blocks_navigation(cx: &mut TestAppContext) {
+        use crate::AuthGuard;
+
         cx.update(|cx| {
             init_router(cx, |router| {
                 router.add_route(Route::new("/", |_, _cx, _params| {
                     gpui::div().into_any_element()
                 }));
-                router.add_route(Route::new("/page1", |_, _cx, _params| {
-                    gpui::div().into_any_element()
-                }));
-                router.add_route(Route::new("/page2", |_, _cx, _params| {
+                router.add_route(
+                    Route::new("/protected", |_, _cx, _params| {
+                        gpui::div().into_any_element()
+                    })
+                    .guard(AuthGuard::new(|_| false, "/login")),
+                );
+                router.add_route(Route::new("/login", |_, _cx, _params| {
                     gpui::div().into_any_element()
                 }));
             });
         });
 
-        // Use static API
-        cx.update(|cx| {
-            Navigator::push(cx, "/page1");
-        });
-        assert_eq!(cx.read(Navigator::current_path), "/page1");
+        // Guard should redirect to /login
+        cx.update(|cx| Navigator::push(cx, "/protected"));
 
-        // Use Flutter-style API
-        cx.update(|cx| {
-            Navigator::of(cx).push("/page2");
-        });
-        assert_eq!(cx.read(Navigator::current_path), "/page2");
+        // We end up at /login (redirect), not /protected
+        assert_eq!(cx.read(Navigator::current_path), "/login");
+    }
 
-        // Mix both styles
-        cx.update(|cx| {
-            Navigator::pop(cx); // Static API
-        });
-        assert_eq!(cx.read(Navigator::current_path), "/page1");
+    #[gpui::test]
+    #[cfg(feature = "guard")]
+    fn test_guard_allows_navigation(cx: &mut TestAppContext) {
+        use crate::AuthGuard;
 
         cx.update(|cx| {
-            Navigator::of(cx).pop(); // Flutter style
+            init_router(cx, |router| {
+                router.add_route(Route::new("/", |_, _cx, _params| {
+                    gpui::div().into_any_element()
+                }));
+                router.add_route(
+                    Route::new("/dashboard", |_, _cx, _params| {
+                        gpui::div().into_any_element()
+                    })
+                    .guard(AuthGuard::new(|_| true, "/login")),
+                );
+            });
         });
+
+        cx.update(|cx| Navigator::push(cx, "/dashboard"));
+        assert_eq!(cx.read(Navigator::current_path), "/dashboard");
+    }
+
+    #[gpui::test]
+    #[cfg(feature = "guard")]
+    fn test_guard_denies_navigation(cx: &mut TestAppContext) {
+        use crate::guard_fn;
+
+        cx.update(|cx| {
+            init_router(cx, |router| {
+                router.add_route(Route::new("/", |_, _cx, _params| {
+                    gpui::div().into_any_element()
+                }));
+                router.add_route(
+                    Route::new("/forbidden", |_, _cx, _params| {
+                        gpui::div().into_any_element()
+                    })
+                    .guard(guard_fn(|_, _| NavigationAction::deny("No access"))),
+                );
+            });
+        });
+
+        cx.update(|cx| Navigator::push(cx, "/forbidden"));
+        // Navigation was blocked, path should remain at "/"
         assert_eq!(cx.read(Navigator::current_path), "/");
+    }
+
+    #[gpui::test]
+    #[cfg(feature = "guard")]
+    fn test_parent_guard_blocks_child(cx: &mut TestAppContext) {
+        use crate::AuthGuard;
+
+        cx.update(|cx| {
+            init_router(cx, |router| {
+                router.add_route(Route::new("/", |_, _cx, _params| {
+                    gpui::div().into_any_element()
+                }));
+                router.add_route(
+                    Route::new("/dashboard", |_, _cx, _params| {
+                        gpui::div().into_any_element()
+                    })
+                    .guard(AuthGuard::new(|_| false, "/login"))
+                    .child(
+                        Route::new("settings", |_, _cx, _params| gpui::div().into_any_element())
+                            .into(),
+                    ),
+                );
+                router.add_route(Route::new("/login", |_, _cx, _params| {
+                    gpui::div().into_any_element()
+                }));
+            });
+        });
+
+        // Guard on /dashboard should also block /dashboard/settings
+        cx.update(|cx| Navigator::push(cx, "/dashboard/settings"));
+        assert_eq!(cx.read(Navigator::current_path), "/login");
+    }
+
+    #[gpui::test]
+    #[cfg(feature = "guard")]
+    fn test_redirect_loop_protection(cx: &mut TestAppContext) {
+        use crate::guard_fn;
+
+        cx.update(|cx| {
+            init_router(cx, |router| {
+                router.add_route(Route::new("/", |_, _cx, _params| {
+                    gpui::div().into_any_element()
+                }));
+                // /a redirects to /b, /b redirects to /a — infinite loop
+                router.add_route(
+                    Route::new("/a", |_, _cx, _params| gpui::div().into_any_element())
+                        .guard(guard_fn(|_, _| NavigationAction::redirect("/b"))),
+                );
+                router.add_route(
+                    Route::new("/b", |_, _cx, _params| gpui::div().into_any_element())
+                        .guard(guard_fn(|_, _| NavigationAction::redirect("/a"))),
+                );
+            });
+        });
+
+        // Should not infinite loop — stays at "/"
+        cx.update(|cx| Navigator::push(cx, "/a"));
+        // Path stays at "/" because the redirect loop is detected and blocked
+        assert_eq!(cx.read(Navigator::current_path), "/");
+    }
+
+    // ========================================================================
+    // Middleware integration tests
+    // ========================================================================
+
+    #[gpui::test]
+    #[cfg(feature = "middleware")]
+    fn test_middleware_runs_during_navigation(cx: &mut TestAppContext) {
+        use crate::middleware_fn;
+        use std::sync::{Arc, Mutex};
+
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let before_calls = calls.clone();
+        let after_calls = calls.clone();
+
+        cx.update(|cx| {
+            init_router(cx, |router| {
+                router.add_route(Route::new("/", |_, _cx, _params| {
+                    gpui::div().into_any_element()
+                }));
+                router.add_route(
+                    Route::new("/page", |_, _cx, _params| gpui::div().into_any_element())
+                        .middleware(middleware_fn(
+                            move |_cx, req| {
+                                before_calls
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("before:{}", req.to));
+                            },
+                            move |_cx, req| {
+                                after_calls
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("after:{}", req.to));
+                            },
+                        )),
+                );
+            });
+        });
+
+        cx.update(|cx| Navigator::push(cx, "/page"));
+        assert_eq!(cx.read(Navigator::current_path), "/page");
+
+        let log = calls.lock().unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0], "before:/page");
+        assert_eq!(log[1], "after:/page");
+    }
+
+    // ========================================================================
+    // path_matches_prefix unit tests
+    // ========================================================================
+
+    #[test]
+    fn test_path_matches_prefix_exact() {
+        assert!(path_matches_prefix("dashboard", "dashboard"));
+    }
+
+    #[test]
+    fn test_path_matches_prefix_child() {
+        assert!(path_matches_prefix("dashboard/settings", "dashboard"));
+    }
+
+    #[test]
+    fn test_path_matches_prefix_no_match() {
+        assert!(!path_matches_prefix("other", "dashboard"));
+    }
+
+    #[test]
+    fn test_path_matches_prefix_with_param() {
+        assert!(path_matches_prefix("users/123", "users/:id"));
+        assert!(path_matches_prefix("users/123/posts", "users/:id"));
+    }
+
+    #[test]
+    fn test_path_matches_prefix_shorter_path() {
+        assert!(!path_matches_prefix("users", "users/123"));
     }
 }

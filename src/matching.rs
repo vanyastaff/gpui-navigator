@@ -42,13 +42,36 @@ pub struct RouteMatch<'a> {
 /// assert_eq!(m.remaining, vec!["profile"]);
 /// ```
 pub fn match_path<'a>(path: &str, route: &'a Arc<Route>) -> Option<RouteMatch<'a>> {
+    // T032: Early exit optimizations for performance
+
+    // Quick check: empty path only matches empty route
+    if path.is_empty() || path == "/" {
+        let route_path = route.config.path.trim_matches('/');
+        if !route_path.is_empty() {
+            return None;
+        }
+    }
+
     let path_segments = split_path(path);
     let route_segments = split_path(&route.config.path);
 
+    // T032: Cache segment counts for multiple comparisons
+    let path_len = path_segments.len();
+    let route_len = route_segments.len();
+
     // Early exit: if route has more segments than path, can't match
     // (unless route has trailing params that can be empty)
-    if route_segments.len() > path_segments.len() {
+    if route_len > path_len {
         return None;
+    }
+
+    // T032: Early exit if both empty - this is a match
+    if route_len == 0 && path_len == 0 {
+        return Some(RouteMatch {
+            route,
+            params: RouteParams::new(),
+            remaining: vec![],
+        });
     }
 
     let mut params = RouteParams::new();

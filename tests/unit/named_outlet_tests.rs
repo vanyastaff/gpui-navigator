@@ -10,9 +10,11 @@ fn test_builder(
     _window: &mut gpui::Window,
     _app: &mut gpui::App,
     _params: &RouteParams,
-) -> impl gpui::IntoElement {
-    gpui::div()
+) -> gpui::AnyElement {
+    gpui::div().into_any_element()
 }
+
+use gpui::IntoElement;
 
 // T056: Named outlet resolution
 #[test]
