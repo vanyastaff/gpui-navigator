@@ -67,7 +67,7 @@ fn test_static_segment_multiple_children() {
 
     for (expected_path, full_path) in test_cases {
         let result = resolve_child_route(&parent, full_path, &params, None);
-        assert!(result.is_some(), "Should resolve {}", expected_path);
+        assert!(result.is_some(), "Should resolve {expected_path}");
         assert_eq!(result.unwrap().0.config.path, expected_path);
     }
 }
@@ -100,10 +100,10 @@ fn test_parameter_segment_various_values() {
 
     for slug in test_values {
         let params = RouteParams::new();
-        let path = format!("/posts/{}", slug);
+        let path = format!("/posts/{slug}");
         let result = resolve_child_route(&parent, &path, &params, None);
 
-        assert!(result.is_some(), "Should resolve for '{}'", slug);
+        assert!(result.is_some(), "Should resolve for '{slug}'");
         let (_, extracted) = result.unwrap();
         assert_eq!(extracted.get("slug"), Some(&slug.to_string()));
     }

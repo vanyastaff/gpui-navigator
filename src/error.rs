@@ -103,19 +103,19 @@ impl fmt::Display for NavigationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NavigationError::RouteNotFound { path } => {
-                write!(f, "Route not found: {}", path)
+                write!(f, "Route not found: {path}")
             }
             NavigationError::GuardBlocked { reason } => {
-                write!(f, "Navigation blocked: {}", reason)
+                write!(f, "Navigation blocked: {reason}")
             }
             NavigationError::InvalidParams { message } => {
-                write!(f, "Invalid parameters: {}", message)
+                write!(f, "Invalid parameters: {message}")
             }
             NavigationError::NavigationFailed { message } => {
-                write!(f, "Navigation failed: {}", message)
+                write!(f, "Navigation failed: {message}")
             }
             NavigationError::Custom { message } => {
-                write!(f, "{}", message)
+                write!(f, "{message}")
             }
         }
     }
@@ -181,6 +181,7 @@ pub type NotFoundHandler = Arc<dyn Fn(&mut App, &str) -> AnyElement + Send + Syn
 ///         gpui::div().child(format!("Error: {err}")).into_any_element()
 ///     });
 /// ```
+#[must_use]
 pub struct ErrorHandlers {
     /// Handler for 404 not found errors
     pub not_found: Option<NotFoundHandler>,
@@ -290,7 +291,7 @@ mod tests {
     #[gpui::test]
     fn test_on_not_found(cx: &mut TestAppContext) {
         let handlers = ErrorHandlers::new()
-            .on_not_found(|_cx, path| div().child(format!("404: {}", path)).into_any_element());
+            .on_not_found(|_cx, path| div().child(format!("404: {path}")).into_any_element());
 
         assert!(handlers.not_found.is_some());
 
@@ -301,7 +302,7 @@ mod tests {
     #[gpui::test]
     fn test_on_error(cx: &mut TestAppContext) {
         let handlers = ErrorHandlers::new()
-            .on_error(|_cx, error| div().child(format!("Error: {}", error)).into_any_element());
+            .on_error(|_cx, error| div().child(format!("Error: {error}")).into_any_element());
 
         assert!(handlers.error.is_some());
 

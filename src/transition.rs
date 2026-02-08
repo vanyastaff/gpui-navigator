@@ -125,8 +125,9 @@ impl Transition {
     pub fn duration(&self) -> Duration {
         match self {
             Self::None => Duration::ZERO,
-            Self::Fade { duration_ms, .. } => Duration::from_millis(*duration_ms),
-            Self::Slide { duration_ms, .. } => Duration::from_millis(*duration_ms),
+            Self::Fade { duration_ms, .. } | Self::Slide { duration_ms, .. } => {
+                Duration::from_millis(*duration_ms)
+            }
         }
     }
 

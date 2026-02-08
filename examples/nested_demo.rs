@@ -1,10 +1,14 @@
 //! Nested Routes Demo
 //!
 //! Demonstrates nested routing with parent/child relationships.
-//! Shows how to create layouts with multiple RouterOutlets for child routes.
+//! Shows how to create layouts with multiple `RouterOutlets` for child routes.
 
-use gpui::*;
-use gpui_navigator::*;
+use gpui::{
+    div, px, rgb, size, App, AppContext, Application, Bounds, Context, ElementId, Entity,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, Styled, TitlebarOptions,
+    Window, WindowBounds, WindowOptions,
+};
+use gpui_navigator::{init_router, Navigator, Route, RouterOutlet, Transition};
 
 fn main() {
     env_logger::init();
@@ -429,7 +433,7 @@ impl Render for ProductListPage {
 impl ProductListPage {
     #[allow(clippy::unused_self)]
     fn product_link(&self, cx: &mut Context<'_, Self>, id: &str, name: &str) -> impl IntoElement {
-        let path = format!("/products/{}", id);
+        let path = format!("/products/{id}");
         let name = name.to_string();
 
         div()

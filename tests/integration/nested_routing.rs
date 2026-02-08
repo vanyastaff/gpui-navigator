@@ -104,13 +104,12 @@ mod nested_routing_integration {
 
         for (path, expected_child) in paths {
             let result = resolve_child_route(&parent, path, &params, None);
-            assert!(result.is_some(), "Should resolve {}", path);
+            assert!(result.is_some(), "Should resolve {path}");
 
             let (child_route, _) = result.unwrap();
             assert_eq!(
                 child_route.config.path, expected_child,
-                "Should match correct child for {}",
-                path
+                "Should match correct child for {path}"
             );
         }
     }

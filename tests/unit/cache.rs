@@ -199,7 +199,7 @@ mod cache_tests {
 
         // Fill to capacity
         for i in 0..capacity {
-            cache.set_parent(format!("/route{}", i), RouteId::from_path("/"));
+            cache.set_parent(format!("/route{i}"), RouteId::from_path("/"));
         }
         assert_eq!(cache.parent_cache_size(), capacity);
 

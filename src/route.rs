@@ -151,13 +151,13 @@ impl NamedRouteRegistry {
 
 /// Substitute route parameters in a path pattern
 ///
-/// Replaces `:param` with actual values from RouteParams
+/// Replaces `:param` with actual values from `RouteParams`
 fn substitute_params(pattern: &str, params: &RouteParams) -> String {
     let mut result = pattern.to_string();
 
     // Replace :param with actual values
     for (key, value) in params.iter() {
-        let placeholder = format!(":{}", key);
+        let placeholder = format!(":{key}");
         result = result.replace(&placeholder, value);
     }
 
@@ -172,14 +172,15 @@ fn substitute_params(pattern: &str, params: &RouteParams) -> String {
 ///
 /// Returns an error message if the path is invalid, None otherwise.
 ///
-/// # Validation Rules
+/// # Errors
 ///
-/// - Path can be empty (for index routes)
-/// - Path must start with '/' or be relative (no leading '/')
-/// - No consecutive slashes ('//')
-/// - Trailing slashes are allowed but not recommended (normalized internally)
-/// - Parameter names must be alphanumeric and not empty
-/// - No duplicate parameter names
+/// Returns `Err(String)` if the path violates any of the following rules:
+///
+/// - Consecutive slashes (`//`) are not allowed
+/// - Parameter names (`:name`) must be non-empty and alphanumeric
+/// - Duplicate parameter names are not allowed
+///
+/// Empty paths are valid (index routes), and trailing slashes are permitted.
 pub fn validate_route_path(path: &str) -> Result<(), String> {
     // Empty path is allowed for index routes
     if path.is_empty() {
@@ -220,8 +221,7 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
                     param_name
                 );
                 return Err(format!(
-                    "Route parameter '{}' must contain only alphanumeric characters and underscores",
-                    param_name
+                    "Route parameter '{param_name}' must contain only alphanumeric characters and underscores"
                 ));
             }
 
@@ -232,7 +232,7 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
                     path,
                     param_name
                 );
-                return Err(format!("Duplicate route parameter: '{}'", param_name));
+                return Err(format!("Duplicate route parameter: '{param_name}'"));
             }
         }
     }
@@ -249,13 +249,14 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
 /// Carries the path pattern, optional name, child configs, and metadata.
 /// Used internally by [`Route`] and also available standalone for scenarios
 /// where you need route metadata without a render function.
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct RouteConfig {
     /// Route path pattern (e.g., "/users/:id")
     pub path: String,
     /// Route name (optional)
     pub name: Option<String>,
-    /// Child routes (NOTE: For nested routing, use Route.children() instead)
+    /// Child routes (NOTE: For nested routing, use `Route.children()` instead)
     pub children: Vec<RouteConfig>,
     /// Route metadata
     pub meta: HashMap<String, String>,
@@ -277,7 +278,7 @@ impl RouteConfig {
     pub fn new(path: impl Into<String>) -> Self {
         let path_str = path.into();
         if let Err(e) = validate_route_path(&path_str) {
-            panic!("Invalid route path '{}': {}", path_str, e);
+            panic!("Invalid route path '{path_str}': {e}");
         }
         Self {
             path: path_str,
@@ -290,6 +291,10 @@ impl RouteConfig {
     /// Create a new route with validation, returning Result
     ///
     /// Use this if you want to handle validation errors instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if the path fails [`validate_route_path`] validation.
     pub fn try_new(path: impl Into<String>) -> Result<Self, String> {
         let path_str = path.into();
         validate_route_path(&path_str)?;
@@ -328,7 +333,7 @@ impl RouteConfig {
 
 /// Type for route builder function
 ///
-/// Builder receives Window, context and parameters, returns an AnyElement.
+/// Builder receives Window, context and parameters, returns an `AnyElement`.
 /// Through context you have access to App, global state, and Navigator.
 ///
 /// The `Window` parameter allows builders to use stateful GPUI features like
@@ -386,6 +391,7 @@ fn get_or_create_cached_component<T: Render + 'static>(
 /// Create routes with [`Route::new`], [`Route::view`], [`Route::component`],
 /// or [`Route::component_with_params`], then configure them with the fluent
 /// builder methods.
+#[must_use]
 pub struct Route {
     /// Route configuration
     pub config: RouteConfig,
@@ -514,7 +520,7 @@ impl Route {
         let type_id = std::any::TypeId::of::<T>();
 
         Self::new(path_str, move |_window, cx, _| {
-            let key = format!("route:{}:{:?}", key_path, type_id);
+            let key = format!("route:{key_path}:{type_id:?}");
             let create_fn = create.clone();
             get_or_create_cached_component(cx, key, create_fn)
         })
@@ -565,10 +571,10 @@ impl Route {
         Self::new(path_str, move |_window, cx, params| {
             let params_key = params
                 .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
+                .map(|(k, v)| format!("{k}={v}"))
                 .collect::<Vec<_>>()
                 .join("&");
-            let key = format!("route:{}:{:?}?{}", key_path, type_id, params_key);
+            let key = format!("route:{key_path}:{type_id:?}?{params_key}");
             let params_clone = params.clone();
             let create_fn = create.clone();
             get_or_create_cached_component(cx, key, || create_fn(&params_clone))
@@ -577,7 +583,7 @@ impl Route {
 
     /// Add child routes to this route
     ///
-    /// Child routes will be rendered in a RouterOutlet within the parent's layout.
+    /// Child routes will be rendered in a `RouterOutlet` within the parent's layout.
     ///
     /// # T038: Index Route Validation
     ///
@@ -859,7 +865,7 @@ impl Route {
 
     /// Find a child route by path segment
     ///
-    /// Used internally by RouterOutlet to resolve child routes.
+    /// Used internally by `RouterOutlet` to resolve child routes.
     pub fn find_child(&self, segment: &str) -> Option<&RouteRef> {
         self.children.iter().find(|child| {
             child.config.path == segment || child.config.path.trim_start_matches('/') == segment
@@ -936,7 +942,7 @@ fn match_path(pattern: &str, path: &str) -> Option<RouteMatch> {
 
 /// Trait for types that can be converted into a route
 ///
-/// This allows Navigator.push() to accept both strings and route builders:
+/// This allows `Navigator.push()` to accept both strings and route builders:
 /// ```ignore
 /// use gpui_navigator::{Navigator, PageRoute};
 ///
@@ -1017,6 +1023,7 @@ impl IntoRoute for &str {
 ///     })
 /// );
 /// ```
+#[must_use]
 pub struct PageRoute {
     path: String,
     params: RouteParams,
@@ -1024,7 +1031,7 @@ pub struct PageRoute {
 }
 
 impl PageRoute {
-    /// Create a new PageRoute with a path (no builder)
+    /// Create a new `PageRoute` with a path (no builder)
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
@@ -1033,7 +1040,7 @@ impl PageRoute {
         }
     }
 
-    /// Create a PageRoute with a builder function.
+    /// Create a `PageRoute` with a builder function.
     ///
     /// The builder must return `AnyElement`.
     pub fn builder(
@@ -1092,6 +1099,7 @@ impl IntoRoute for PageRoute {
 /// params.set("userId".to_string(), "123".to_string());
 /// Navigator::push_named(cx, "user_profile", &params);
 /// ```
+#[must_use]
 pub struct NamedRoute {
     name: String,
     params: RouteParams,
@@ -1342,6 +1350,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "Invalid route path")]
     fn test_route_config_new_panics_on_invalid() {
-        RouteConfig::new("/users//profile");
+        let _ = RouteConfig::new("/users//profile");
     }
 }

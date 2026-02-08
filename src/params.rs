@@ -439,7 +439,7 @@ fn encode_uri_component(s: &str) -> String {
             _ => {
                 let mut buf = [0u8; 4];
                 for byte in c.encode_utf8(&mut buf).bytes() {
-                    let _ = write!(result, "%{:02X}", byte);
+                    let _ = write!(result, "%{byte:02X}");
                 }
             }
         }

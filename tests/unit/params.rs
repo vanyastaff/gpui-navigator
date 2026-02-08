@@ -1,4 +1,4 @@
-//! Unit tests for RouteParams merging
+//! Unit tests for `RouteParams` merging
 //!
 //! Tests for src/params.rs - verifying parent+child merge,
 //! collision handling, and empty params as specified in T012.

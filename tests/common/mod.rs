@@ -54,14 +54,12 @@ pub fn assert_param_equals(params: &RouteParams, key: &str, expected: &str) {
     let value = params.get(key);
     assert!(
         value.is_some(),
-        "Parameter '{}' not found in RouteParams",
-        key
+        "Parameter '{key}' not found in RouteParams"
     );
     assert_eq!(
         value.unwrap(),
         expected,
-        "Parameter '{}' has wrong value",
-        key
+        "Parameter '{key}' has wrong value"
     );
 }
 
@@ -69,24 +67,23 @@ pub fn assert_param_equals(params: &RouteParams, key: &str, expected: &str) {
 pub fn assert_param_not_present(params: &RouteParams, key: &str) {
     assert!(
         params.get(key).is_none(),
-        "Parameter '{}' should not be present",
-        key
+        "Parameter '{key}' should not be present"
     );
 }
 
-/// Create empty RouteParams for testing
+/// Create empty `RouteParams` for testing
 pub fn empty_params() -> RouteParams {
     RouteParams::new()
 }
 
-/// Create RouteParams with single key-value pair
+/// Create `RouteParams` with single key-value pair
 pub fn params_with(key: &str, value: &str) -> RouteParams {
     let mut params = RouteParams::new();
     params.insert(key.to_string(), value.to_string());
     params
 }
 
-/// Create RouteParams with multiple key-value pairs
+/// Create `RouteParams` with multiple key-value pairs
 pub fn params_with_multiple(pairs: Vec<(&str, &str)>) -> RouteParams {
     let mut params = RouteParams::new();
     for (key, value) in pairs {

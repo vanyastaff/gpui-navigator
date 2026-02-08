@@ -92,7 +92,7 @@ pub fn normalize_path(path: &'_ str) -> Cow<'_, str> {
     if trimmed.is_empty() {
         Cow::Borrowed("/")
     } else {
-        Cow::Owned(format!("/{}", trimmed))
+        Cow::Owned(format!("/{trimmed}"))
     }
 }
 
@@ -136,7 +136,7 @@ pub fn resolve_child_route(
 
 /// Internal implementation with recursion depth tracking (T031)
 ///
-/// Prevents infinite loops by enforcing MAX_RECURSION_DEPTH limit.
+/// Prevents infinite loops by enforcing `MAX_RECURSION_DEPTH` limit.
 /// Returns None if depth exceeded.
 fn resolve_child_route_impl(
     parent_route: &Arc<Route>,
@@ -177,34 +177,31 @@ fn resolve_child_route_impl(
     // Get the children for this outlet (named or default)
     let children = if let Some(name) = outlet_name {
         // Named outlet - get children from named_children map
-        match parent_route.get_named_children(name) {
-            Some(named_children) => {
-                trace_log!(
-                    "Using named outlet '{}' with {} children",
+        if let Some(named_children) = parent_route.get_named_children(name) {
+            trace_log!(
+                "Using named outlet '{}' with {} children",
+                name,
+                named_children.len()
+            );
+            named_children
+        } else {
+            // T060: Improved error message with available outlets list
+            let available_outlets: Vec<&str> = parent_route.named_outlet_names();
+            if available_outlets.is_empty() {
+                warn_log!(
+                    "Named outlet '{}' not found in route '{}'. No named outlets are defined for this route.",
                     name,
-                    named_children.len()
+                    parent_route.config.path
                 );
-                named_children
+            } else {
+                warn_log!(
+                    "Named outlet '{}' not found in route '{}'. Available named outlets: {:?}",
+                    name,
+                    parent_route.config.path,
+                    available_outlets
+                );
             }
-            None => {
-                // T060: Improved error message with available outlets list
-                let available_outlets: Vec<&str> = parent_route.named_outlet_names();
-                if available_outlets.is_empty() {
-                    warn_log!(
-                        "Named outlet '{}' not found in route '{}'. No named outlets are defined for this route.",
-                        name,
-                        parent_route.config.path
-                    );
-                } else {
-                    warn_log!(
-                        "Named outlet '{}' not found in route '{}'. Available named outlets: {:?}",
-                        name,
-                        parent_route.config.path,
-                        available_outlets
-                    );
-                }
-                return None;
-            }
+            return None;
         }
     } else {
         // Default outlet - use regular children
@@ -439,6 +436,6 @@ pub fn build_child_path<'a>(parent_path: &'a str, child_path: &'a str) -> Cow<'a
         child_normalized
     } else {
         // Combine parent and child
-        Cow::Owned(format!("/{}/{}", parent, child))
+        Cow::Owned(format!("/{parent}/{child}"))
     }
 }

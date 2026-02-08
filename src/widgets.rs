@@ -12,7 +12,7 @@
 //!   optional active-state styling.
 //! - [`DefaultPages`] — configurable fallback pages (404, loading, error).
 //!
-//! # Architecture (MatchStack)
+//! # Architecture (`MatchStack`)
 //!
 //! Instead of each outlet independently searching the route tree at render
 //! time, [`GlobalRouter`] resolves a
@@ -30,6 +30,7 @@ use crate::resolve::{
     current_outlet_depth, enter_outlet, reset_outlet_depth, resolve_named_outlet, set_parent_depth,
 };
 use crate::{debug_log, trace_log};
+#[allow(clippy::wildcard_imports)]
 use gpui::*;
 
 #[cfg(feature = "transition")]
@@ -60,7 +61,7 @@ pub struct RouterOutlet {
     name: Option<String>,
     /// Cached depth in the match stack. Computed once on first render via
     /// `enter_outlet()`, then reused on subsequent renders via `set_parent_depth()`.
-    /// This avoids the thread-local PARENT_DEPTH growing stale between GPUI frames.
+    /// This avoids the thread-local `PARENT_DEPTH` growing stale between GPUI frames.
     depth: Option<usize>,
     /// Tracks the last rendered path for transition animations
     #[cfg(feature = "transition")]
@@ -168,7 +169,7 @@ impl RouterOutlet {
     }
 }
 
-/// Create a cached RouterOutlet that persists across renders
+/// Create a cached `RouterOutlet` that persists across renders
 pub fn router_outlet<V>(
     window: &mut Window,
     cx: &mut Context<'_, V>,
@@ -179,7 +180,7 @@ pub fn router_outlet<V>(
     })
 }
 
-/// Create a cached named RouterOutlet
+/// Create a cached named `RouterOutlet`
 pub fn router_outlet_named<V>(
     window: &mut Window,
     cx: &mut Context<'_, V>,
@@ -366,9 +367,8 @@ fn render_with_transition(
         Transition::Fade { duration_ms, .. } => {
             let duration = *duration_ms;
             let enter_id =
-                SharedString::from(format!("outlet_fade_enter_{:?}_{}", outlet_name, counter));
-            let exit_id =
-                SharedString::from(format!("outlet_fade_exit_{:?}_{}", outlet_name, counter));
+                SharedString::from(format!("outlet_fade_enter_{outlet_name:?}_{counter}"));
+            let exit_id = SharedString::from(format!("outlet_fade_exit_{outlet_name:?}_{counter}"));
 
             let mut container = div().relative().w_full().h_full();
 
@@ -416,9 +416,9 @@ fn render_with_transition(
         } => {
             let duration = *duration_ms;
             let enter_id =
-                SharedString::from(format!("outlet_slide_enter_{:?}_{}", outlet_name, counter));
+                SharedString::from(format!("outlet_slide_enter_{outlet_name:?}_{counter}"));
             let exit_id =
-                SharedString::from(format!("outlet_slide_exit_{:?}_{}", outlet_name, counter));
+                SharedString::from(format!("outlet_slide_exit_{outlet_name:?}_{counter}"));
 
             match direction {
                 SlideDirection::Left | SlideDirection::Right => {
@@ -626,7 +626,7 @@ impl Render for RouterView {
     }
 }
 
-/// Functional RouterView — renders the top-level matched route (depth 0).
+/// Functional `RouterView` — renders the top-level matched route (depth 0).
 ///
 /// Resets outlet tracking to "no parent" and then calls `enter_outlet()` to
 /// render `match_stack[0]`. Child outlets inside the builder will see
@@ -690,6 +690,7 @@ use crate::Navigator;
 ///     .active_class(|div| div.text_color(gpui::rgb(0x2196f3)))
 ///     .build(cx)
 /// ```
+#[must_use]
 pub struct RouterLink {
     /// Target route path
     path: SharedString,
@@ -700,7 +701,7 @@ pub struct RouterLink {
 }
 
 impl RouterLink {
-    /// Create a new RouterLink to the specified path
+    /// Create a new `RouterLink` to the specified path
     pub fn new(path: impl Into<SharedString>) -> Self {
         Self {
             path: path.into(),
@@ -793,6 +794,7 @@ pub fn router_link<V: 'static>(
 ///     .with_not_found(|| gpui::div().child("Custom 404").into_any_element())
 ///     .with_error(|msg| gpui::div().child(msg.to_string()).into_any_element())
 /// ```
+#[must_use]
 pub struct DefaultPages {
     /// Custom 404 not found page builder
     pub not_found: Option<Box<dyn Fn() -> AnyElement + Send + Sync>>,
@@ -900,7 +902,7 @@ fn default_not_found_page(path: &str) -> impl IntoElement {
             div()
                 .text_base()
                 .text_color(rgb(0xcccccc))
-                .child(format!("No route matches: {}", path)),
+                .child(format!("No route matches: {path}")),
         )
 }
 

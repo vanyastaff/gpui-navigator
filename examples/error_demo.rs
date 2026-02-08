@@ -1,10 +1,15 @@
-//! Error Handlers Demo - RouterLink Example
+//! Error Handlers Demo - `RouterLink` Example
 //!
-//! Demonstrates RouterLink usage with valid and invalid routes.
+//! Demonstrates `RouterLink` usage with valid and invalid routes.
 
 use gpui::prelude::*;
-use gpui::*;
-use gpui_navigator::*;
+use gpui::{
+    div, px, relative, rgb, size, App, AppContext, Application, Bounds, Div, Entity, FontWeight,
+    Rgba, TitlebarOptions, Window, WindowBounds, WindowOptions,
+};
+use gpui_navigator::{
+    init_router, Navigator, Route, RouteParams, RouterLink, RouterOutlet, Transition,
+};
 
 fn main() {
     env_logger::init();
@@ -329,7 +334,7 @@ fn user_page(params: &RouteParams) -> impl IntoElement {
                 .text_3xl()
                 .font_weight(FontWeight::BOLD)
                 .text_color(rgb(0xffffff))
-                .child(format!("User #{}", user_id)),
+                .child(format!("User #{user_id}")),
         )
         .child(
             div()

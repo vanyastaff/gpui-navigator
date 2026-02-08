@@ -1,11 +1,15 @@
 //! Stateful Route Demo
 //!
-//! Demonstrates how to create stateful page components using Route::component().
+//! Demonstrates how to create stateful page components using `Route::component()`.
 //! This is the CORRECT way to build pages in GPUI - using Entity-based components
 //! that maintain state across navigation.
 
-use gpui::*;
-use gpui_navigator::*;
+use gpui::{
+    div, px, rgb, size, App, AppContext, Application, Bounds, Context, Entity, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, Styled, TitlebarOptions, Window, WindowBounds,
+    WindowOptions,
+};
+use gpui_navigator::{init_router, Navigator, Route, RouterOutlet, Transition};
 
 fn main() {
     Application::new().run(|cx: &mut App| {

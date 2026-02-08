@@ -64,6 +64,7 @@ const MAX_REDIRECT_DEPTH: usize = 5;
 /// let request = NavigationRequest::new("/dashboard".to_string());
 /// assert_eq!(request.to, "/dashboard");
 /// ```
+#[must_use]
 pub struct NavigationRequest {
     /// The path we're navigating from (if any)
     pub from: Option<String>,
@@ -238,10 +239,7 @@ impl GlobalRouter {
                 path
             );
             return NavigationResult::Blocked {
-                reason: format!(
-                    "Redirect loop detected (depth {}): target '{}'",
-                    redirect_depth, path
-                ),
+                reason: format!("Redirect loop detected (depth {redirect_depth}): target '{path}'"),
                 redirect: None,
             };
         }
@@ -297,9 +295,10 @@ impl GlobalRouter {
         let event = match op {
             NavigateOp::Push => self.state.push(path),
             NavigateOp::Replace => self.state.replace(path),
-            NavigateOp::Back => match self.state.back() {
-                Some(event) => event,
-                None => {
+            NavigateOp::Back => {
+                if let Some(event) = self.state.back() {
+                    event
+                } else {
                     error_log!("back() returned None after peek succeeded");
                     return NavigationResult::Error(
                         crate::error::NavigationError::NavigationFailed {
@@ -307,10 +306,11 @@ impl GlobalRouter {
                         },
                     );
                 }
-            },
-            NavigateOp::Forward => match self.state.forward() {
-                Some(event) => event,
-                None => {
+            }
+            NavigateOp::Forward => {
+                if let Some(event) = self.state.forward() {
+                    event
+                } else {
                     error_log!("forward() returned None after peek succeeded");
                     return NavigationResult::Error(
                         crate::error::NavigationError::NavigationFailed {
@@ -318,7 +318,7 @@ impl GlobalRouter {
                         },
                     );
                 }
-            },
+            }
         };
 
         // Resolve match stack immediately after navigation
@@ -478,15 +478,12 @@ impl GlobalRouter {
         params: &RouteParams,
         cx: &App,
     ) -> Option<NavigationResult> {
-        let url = match self.named_routes.url_for(name, params) {
-            Some(url) => {
-                debug_log!("Named route '{}' resolved to '{}'", name, url);
-                url
-            }
-            None => {
-                warn_log!("Named route '{}' not found in registry", name);
-                return None;
-            }
+        let url = if let Some(url) = self.named_routes.url_for(name, params) {
+            debug_log!("Named route '{}' resolved to '{}'", name, url);
+            url
+        } else {
+            warn_log!("Named route '{}' not found in registry", name);
+            return None;
         };
         Some(self.push(url, cx))
     }
@@ -667,7 +664,7 @@ fn walk_matching_routes<'a>(
     } else if route_path.is_empty() {
         accumulated.to_string()
     } else {
-        format!("{}/{}", accumulated, route_path)
+        format!("{accumulated}/{route_path}")
     };
 
     let matches = if full.is_empty() {
@@ -811,6 +808,7 @@ pub fn current_path(cx: &App) -> String {
 ///     .push("/users")
 ///     .push("/users/42");
 /// ```
+#[must_use]
 pub struct NavigatorHandle<'a, C: BorrowAppContext> {
     cx: &'a mut C,
 }
@@ -1223,23 +1221,23 @@ mod tests {
         });
 
         cx.update(|cx| {
-            Navigator::of(cx).push("/home");
+            let _ = Navigator::of(cx).push("/home");
         });
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
         cx.update(|cx| {
-            Navigator::of(cx).push("/profile").pop();
+            let _ = Navigator::of(cx).push("/profile").pop();
         });
         assert_eq!(cx.read(Navigator::current_path), "/home");
 
         cx.update(|cx| {
-            Navigator::of(cx).replace("/profile");
+            let _ = Navigator::of(cx).replace("/profile");
         });
         assert_eq!(cx.read(Navigator::current_path), "/profile");
 
         assert!(cx.read(Navigator::can_pop));
         cx.update(|cx| {
-            Navigator::of(cx).pop();
+            let _ = Navigator::of(cx).pop();
         });
         assert_eq!(cx.read(Navigator::current_path), "/");
         assert!(!cx.read(Navigator::can_pop));

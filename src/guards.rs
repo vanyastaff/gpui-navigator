@@ -426,6 +426,7 @@ impl RouteGuard for Guards {
 }
 
 /// Builder for [`Guards`] with fluent API.
+#[must_use]
 pub struct GuardBuilder {
     guards: Vec<Box<dyn RouteGuard>>,
 }

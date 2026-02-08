@@ -33,43 +33,29 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-# Allow some pedantic lints that are too strict for builder pattern APIs
+# Pedantic lints that are too strict for builder-pattern APIs
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-return_self_not_must_use = "allow"
-doc_markdown = "allow"
 missing_fields_in_debug = "allow"
 unnecessary_literal_bound = "allow"
-# Allow dependency-related warnings (we can't control gpui's dependencies)
+too_many_lines = "allow"
+needless_borrows_for_generic_args = "allow"
+# Dependency-related (we can't control gpui's transitive deps)
 multiple_crate_versions = "allow"
-# Allow some nursery lints that produce false positives or are too strict
+# Nursery lints with false positives in GPUI context
 missing_const_for_fn = "allow"
 option_if_let_else = "allow"
 use_self = "allow"
 derive_partial_eq_without_eq = "allow"
 significant_drop_tightening = "allow"
-# Allow format string interpolation style (both are valid)
-uninlined_format_args = "allow"
-# Allow minor optimization suggestions
+only_used_in_recursion = "allow"
+# Minor optimization suggestions not worth the churn
 assigning_clones = "allow"
 cast_precision_loss = "allow"
-match_same_arms = "allow"
 suboptimal_flops = "allow"
-# Allow code style preferences
-wildcard_imports = "allow"
-single_match_else = "allow"
-too_many_lines = "allow"
-needless_lifetimes = "allow"
-needless_borrows_for_generic_args = "allow"
-# Allow remaining minor warnings
-no_effect_underscore_binding = "allow"
-needless_doctest_main = "allow"
-only_used_in_recursion = "allow"
-# Allow API compatibility patterns
+# API compatibility (GPUI requires &mut for context params)
 needless_pass_by_ref_mut = "allow"
-# Allow unreadable literals for hex colors (0xRRGGBB is standard)
+# Hex color literals (0xRRGGBB is standard in UI code)
 unreadable_literal = "allow"
 
 [dependencies]

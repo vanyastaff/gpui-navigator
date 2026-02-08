@@ -1,6 +1,6 @@
 //! Unit tests for parameter name extraction
 //!
-//! Tests the extract_param_name() helper function to ensure proper parameter parsing.
+//! Tests the `extract_param_name()` helper function to ensure proper parameter parsing.
 
 use gpui_navigator::extract_param_name;
 

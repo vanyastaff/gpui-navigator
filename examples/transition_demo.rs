@@ -1,8 +1,11 @@
 //! Interactive demo of route transition animations
 
 use gpui::prelude::*;
-use gpui::*;
-use gpui_navigator::*;
+use gpui::{
+    div, px, relative, rgb, size, App, AppContext, Application, Bounds, Entity, FontWeight,
+    MouseButton, Rgba, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+};
+use gpui_navigator::{info_log, init_router, Navigator, Route, RouterOutlet, Transition};
 
 fn main() {
     env_logger::init();

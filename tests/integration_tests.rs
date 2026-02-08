@@ -1,4 +1,4 @@
-//! Integration tests for gpui_navigator
+//! Integration tests for `gpui_navigator`
 //!
 //! These tests verify the complete router workflow including initialization,
 //! navigation, guards, and route matching.
@@ -36,7 +36,7 @@ async fn test_router_with_named_routes(cx: &mut TestAppContext) {
             router.add_route(
                 Route::new("/users/:id", |_, _, params| {
                     let id = params.get("id").cloned().unwrap_or_default();
-                    div().child(format!("User {}", id)).into_any_element()
+                    div().child(format!("User {id}")).into_any_element()
                 })
                 .name("user-profile"),
             );
@@ -147,7 +147,7 @@ async fn test_route_params_extraction(cx: &mut TestAppContext) {
         init_router(cx, |router| {
             router.add_route(Route::new("/users/:id", |_, _, params| {
                 let id = params.get("id").cloned().unwrap_or_default();
-                div().child(format!("User: {}", id)).into_any_element()
+                div().child(format!("User: {id}")).into_any_element()
             }));
         });
     });
@@ -491,7 +491,7 @@ fn test_route_cache_stats() {
 async fn test_not_found_handler_rendering(cx: &mut TestAppContext) {
     let handlers = ErrorHandlers::new().on_not_found(|_cx, path| {
         div()
-            .child(format!("Custom 404: Page '{}' not found", path))
+            .child(format!("Custom 404: Page '{path}' not found"))
             .into_any_element()
     });
 
@@ -507,12 +507,12 @@ async fn test_error_handler_rendering(cx: &mut TestAppContext) {
     let handlers = ErrorHandlers::new()
         .on_not_found(|_cx, path| {
             div()
-                .child(format!("404: {} not found", path))
+                .child(format!("404: {path} not found"))
                 .into_any_element()
         })
         .on_error(|_cx, error| {
             div()
-                .child(format!("Error occurred: {}", error))
+                .child(format!("Error occurred: {error}"))
                 .into_any_element()
         });
 
@@ -536,14 +536,14 @@ async fn test_custom_error_pages(cx: &mut TestAppContext) {
         .on_not_found(|_cx, path| {
             div()
                 .child("Error 404")
-                .child(div().child(format!("The page '{}' could not be found", path)))
+                .child(div().child(format!("The page '{path}' could not be found")))
                 .child(div().child("Go back to home"))
                 .into_any_element()
         })
         .on_error(|_cx, error| {
             div()
                 .child("Application Error")
-                .child(div().child(format!("Details: {}", error)))
+                .child(div().child(format!("Details: {error}")))
                 .into_any_element()
         });
 
@@ -583,7 +583,7 @@ async fn test_full_navigation_flow(cx: &mut TestAppContext) {
             router.add_route(
                 Route::new("/users/:id", |_, _, params| {
                     let id = params.get("id").cloned().unwrap_or_default();
-                    div().child(format!("User {}", id)).into_any_element()
+                    div().child(format!("User {id}")).into_any_element()
                 })
                 .name("user-detail")
                 .transition(Transition::slide_left(300)),

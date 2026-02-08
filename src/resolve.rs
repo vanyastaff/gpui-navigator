@@ -39,7 +39,7 @@
 //!
 //! Outlets discover their depth via a thread-local counter:
 //! - `router_view()` resets depth to 0, renders `match_stack[0]`
-//! - Each outlet sets depth = parent_depth + 1 and renders `match_stack[depth]`
+//! - Each outlet sets depth = `parent_depth` + 1 and renders `match_stack[depth]`
 //! - Works for both functional (`render_router_outlet`) and entity (`RouterOutlet`) APIs
 
 use crate::nested::normalize_path;
@@ -135,7 +135,7 @@ pub fn enter_outlet() -> usize {
     my_depth
 }
 
-/// Set PARENT_DEPTH to `depth` so child outlets see the correct parent.
+/// Set `PARENT_DEPTH` to `depth` so child outlets see the correct parent.
 ///
 /// Called by outlets that already know their depth (from a previous render).
 /// This ensures that child outlets created via `enter_outlet()` or
@@ -263,7 +263,7 @@ impl MatchStack {
                     entry
                         .params
                         .iter()
-                        .map(|(k, v)| format!("{}={}", k, v))
+                        .map(|(k, v)| format!("{k}={v}"))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )

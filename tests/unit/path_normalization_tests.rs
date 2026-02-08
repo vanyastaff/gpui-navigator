@@ -1,6 +1,6 @@
 //! Unit tests for path normalization
 //!
-//! Tests the normalize_path() helper function to ensure consistent path handling.
+//! Tests the `normalize_path()` helper function to ensure consistent path handling.
 
 use gpui_navigator::normalize_path;
 

@@ -1,7 +1,7 @@
-//! Unit tests for resolve module (MatchStack resolution)
+//! Unit tests for resolve module (`MatchStack` resolution)
 //!
 //! Standalone test crate to avoid compiler stack overflow from deep generic
-//! expansion of Route::new() when compiled with all other tests.
+//! expansion of `Route::new()` when compiled with all other tests.
 
 use gpui::{div, AnyElement, App, IntoElement, ParentElement, Window};
 use gpui_navigator::resolve::*;

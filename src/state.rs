@@ -178,7 +178,7 @@ impl RouterState {
 
     /// Get the first top-level Route that matches the current path.
     ///
-    /// With MatchStack architecture, rendering uses `GlobalRouter::match_stack()`.
+    /// With `MatchStack` architecture, rendering uses `GlobalRouter::match_stack()`.
     /// This method is kept for compatibility — it returns the first registered
     /// route whose pattern matches the current path (exact or prefix).
     pub fn current_route(&self) -> Option<&Arc<Route>> {
