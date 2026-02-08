@@ -56,7 +56,7 @@ impl RouteParams {
     }
 
     /// Create from an existing `HashMap`.
-    pub fn from_map(params: HashMap<String, String>) -> Self {
+    pub const fn from_map(params: HashMap<String, String>) -> Self {
         Self { params }
     }
 
@@ -91,7 +91,7 @@ impl RouteParams {
     }
 
     /// Get a reference to the underlying parameter map.
-    pub fn all(&self) -> &HashMap<String, String> {
+    pub const fn all(&self) -> &HashMap<String, String> {
         &self.params
     }
 
@@ -138,7 +138,7 @@ impl RouteParams {
     /// assert_eq!(merged.get("projectId"), Some(&"456".to_string()));
     /// assert_eq!(merged.get("view"), Some(&"grid".to_string())); // Child wins
     /// ```
-    pub fn merge(parent: &RouteParams, child: &RouteParams) -> RouteParams {
+    pub fn merge(parent: &Self, child: &Self) -> Self {
         let mut merged = parent.clone();
         merged
             .params
@@ -172,8 +172,8 @@ impl RouteParams {
     /// let params = RouteParams::from_path("/products/xyz", "/users/:userId");
     /// assert!(params.is_empty());
     /// ```
-    pub fn from_path(path: &str, pattern: &str) -> RouteParams {
-        let mut params = RouteParams::new();
+    pub fn from_path(path: &str, pattern: &str) -> Self {
+        let mut params = Self::new();
 
         // Split path and pattern into segments
         let path_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -189,15 +189,13 @@ impl RouteParams {
             if let Some(param_name) = pattern_seg.strip_prefix(':') {
                 // Dynamic segment - extract parameter
                 // Handle type constraints like :id<i32> -> extract "id"
-                let param_name = if let Some(pos) = param_name.find('<') {
-                    &param_name[..pos]
-                } else {
-                    param_name
-                };
+                let param_name = param_name
+                    .find('<')
+                    .map_or(param_name, |pos| &param_name[..pos]);
                 params.insert(param_name.to_string(), (*path_seg).to_string());
             } else if pattern_seg != path_seg {
                 // Static segment mismatch - no match
-                return RouteParams::new();
+                return Self::new();
             }
         }
 

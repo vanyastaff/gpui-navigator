@@ -93,7 +93,7 @@ pub trait RouteGuard: Send + Sync + 'static {
     fn check(&self, cx: &App, request: &NavigationRequest) -> NavigationAction;
 
     /// Guard name for debugging and error messages.
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "RouteGuard"
     }
 
@@ -123,7 +123,7 @@ pub trait RouteGuard: Send + Sync + 'static {
 ///     }
 /// });
 /// ```
-pub fn guard_fn<F>(f: F) -> FnGuard<F>
+pub const fn guard_fn<F>(f: F) -> FnGuard<F>
 where
     F: Fn(&App, &NavigationRequest) -> NavigationAction + Send + Sync + 'static,
 {
@@ -205,7 +205,7 @@ impl RouteGuard for AuthGuard {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "AuthGuard"
     }
 
@@ -280,7 +280,7 @@ impl RouteGuard for RoleGuard {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "RoleGuard"
     }
 
@@ -356,7 +356,7 @@ impl RouteGuard for PermissionGuard {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "PermissionGuard"
     }
 
@@ -416,7 +416,7 @@ impl RouteGuard for Guards {
         NavigationAction::Continue
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Guards"
     }
 
@@ -497,7 +497,7 @@ impl RouteGuard for NotGuard {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "NotGuard"
     }
 

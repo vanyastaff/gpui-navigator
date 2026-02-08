@@ -96,7 +96,7 @@ impl Clone for RouterOutlet {
 
 impl RouterOutlet {
     /// Create a new default outlet
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             name: None,
             depth: None,
@@ -356,6 +356,7 @@ fn build_exit_element(depth: usize, window: &mut Window, cx: &mut App) -> Option
 /// - **Slide Right**: old slides out right, new slides in from left
 /// - **Slide Up/Down**: same pattern on the vertical axis
 #[cfg(feature = "transition")]
+#[allow(clippy::too_many_lines)]
 fn render_with_transition(
     enter_content: AnyElement,
     exit_content: Option<AnyElement>,
@@ -615,7 +616,7 @@ impl Default for RouterView {
 
 impl RouterView {
     /// Create a new `RouterView`.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -844,29 +845,24 @@ impl DefaultPages {
 
     /// Render 404 not found page (custom or default)
     pub fn render_not_found(&self) -> AnyElement {
-        if let Some(builder) = &self.not_found {
-            builder()
-        } else {
-            default_not_found_page("").into_any_element()
-        }
+        self.not_found
+            .as_ref()
+            .map_or_else(|| default_not_found_page("").into_any_element(), |b| b())
     }
 
     /// Render loading page (custom or default)
     pub fn render_loading(&self) -> AnyElement {
-        if let Some(builder) = &self.loading {
-            builder()
-        } else {
-            default_loading_page().into_any_element()
-        }
+        self.loading
+            .as_ref()
+            .map_or_else(|| default_loading_page().into_any_element(), |b| b())
     }
 
     /// Render error page (custom or default)
     pub fn render_error(&self, message: &str) -> AnyElement {
-        if let Some(builder) = &self.error {
-            builder(message)
-        } else {
-            default_error_page(message).into_any_element()
-        }
+        self.error.as_ref().map_or_else(
+            || default_error_page(message).into_any_element(),
+            |b| b(message),
+        )
     }
 }
 

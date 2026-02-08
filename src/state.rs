@@ -121,7 +121,7 @@ impl RouterState {
     }
 
     /// Return the current route parameters (used for parameter inheritance in nested routing).
-    pub fn current_params(&self) -> &RouteParams {
+    pub const fn current_params(&self) -> &RouteParams {
         &self.current_params
     }
 
@@ -248,7 +248,7 @@ impl RouterState {
             path
         );
 
-        self.history[self.current] = path.clone();
+        self.history[self.current].clone_from(&path);
 
         RouteChangeEvent {
             from,
@@ -312,7 +312,7 @@ impl RouterState {
     }
 
     /// Return `true` if [`back`](Self::back) would succeed.
-    pub fn can_go_back(&self) -> bool {
+    pub const fn can_go_back(&self) -> bool {
         self.current > 0
     }
 

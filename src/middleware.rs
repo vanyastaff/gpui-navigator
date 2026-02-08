@@ -78,7 +78,7 @@ pub trait RouteMiddleware: Send + Sync + 'static {
     fn after_navigation(&self, cx: &App, request: &NavigationRequest);
 
     /// Middleware name for debugging.
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "RouteMiddleware"
     }
 
@@ -110,7 +110,7 @@ pub trait RouteMiddleware: Send + Sync + 'static {
 ///     },
 /// );
 /// ```
-pub fn middleware_fn<B, A>(before: B, after: A) -> FnMiddleware<B, A>
+pub const fn middleware_fn<B, A>(before: B, after: A) -> FnMiddleware<B, A>
 where
     B: Fn(&App, &NavigationRequest) + Send + Sync + 'static,
     A: Fn(&App, &NavigationRequest) + Send + Sync + 'static,
@@ -181,6 +181,7 @@ mod tests {
         let log = calls.lock().unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0], "before:/test");
+        drop(log);
     }
 
     #[gpui::test]
@@ -196,6 +197,7 @@ mod tests {
         let log = calls.lock().unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0], "after:/test");
+        drop(log);
     }
 
     #[test]

@@ -124,10 +124,7 @@ thread_local! {
 pub fn enter_outlet() -> usize {
     let parent = PARENT_DEPTH.with(Cell::get);
 
-    let my_depth = match parent {
-        None => 0,        // ROOT outlet
-        Some(d) => d + 1, // CHILD outlet
-    };
+    let my_depth = parent.map_or(0, |d| d + 1);
 
     // Set for children rendered inside our builder
     PARENT_DEPTH.with(|p| p.set(Some(my_depth)));
@@ -190,7 +187,7 @@ pub struct MatchStack {
 
 impl MatchStack {
     /// Create an empty match stack.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
         }
@@ -341,6 +338,7 @@ pub fn resolve_match_stack(routes: &[Arc<Route>], path: &str) -> MatchStack {
 ///
 /// Returns `true` if a complete match was found (all segments consumed or
 /// a valid leaf/index route was reached).
+#[allow(clippy::too_many_lines)]
 fn resolve_recursive(
     routes: &[Arc<Route>],
     remaining: &[&str],
@@ -432,11 +430,9 @@ fn resolve_recursive(
                 // Parameter segment → extract value
                 let param_name = route_seg.trim_start_matches(':');
                 // Strip constraint syntax: `:id<i32>` → `id`
-                let param_name = if let Some(pos) = param_name.find('<') {
-                    &param_name[..pos]
-                } else {
-                    param_name
-                };
+                let param_name = param_name
+                    .find('<')
+                    .map_or(param_name, |pos| &param_name[..pos]);
                 params.insert(param_name.to_string(), remaining[i].to_string());
             } else if *route_seg == remaining[i] {
                 // Static segment → exact match

@@ -152,13 +152,13 @@ impl GlobalRouter {
     ///
     /// Outlets call this during render to find their route by depth index.
     /// The stack is built once per navigation, so this is O(1).
-    pub fn match_stack(&self) -> &MatchStack {
+    pub const fn match_stack(&self) -> &MatchStack {
         &self.match_stack
     }
 
     /// Get the previous match stack (for transition animations).
     #[cfg(feature = "transition")]
-    pub fn previous_stack(&self) -> Option<&MatchStack> {
+    pub const fn previous_stack(&self) -> Option<&MatchStack> {
         self.previous_stack.as_ref()
     }
 
@@ -520,7 +520,7 @@ impl GlobalRouter {
     }
 
     /// Check if can go back.
-    pub fn can_go_back(&self) -> bool {
+    pub const fn can_go_back(&self) -> bool {
         self.state.can_go_back()
     }
 
@@ -535,7 +535,7 @@ impl GlobalRouter {
     }
 
     /// Get state reference.
-    pub fn state(&self) -> &RouterState {
+    pub const fn state(&self) -> &RouterState {
         &self.state
     }
 
@@ -547,7 +547,7 @@ impl GlobalRouter {
 
     /// Get nested route cache statistics.
     #[cfg(feature = "cache")]
-    pub fn cache_stats(&self) -> &CacheStats {
+    pub const fn cache_stats(&self) -> &CacheStats {
         self.nested_cache.stats()
     }
 
@@ -583,7 +583,7 @@ impl GlobalRouter {
 
     /// Check if there's a transition override set.
     #[cfg(feature = "transition")]
-    pub fn has_next_transition(&self) -> bool {
+    pub const fn has_next_transition(&self) -> bool {
         self.next_transition.is_some()
     }
 
@@ -747,7 +747,7 @@ impl UseRouter for App {
 
     fn update_router<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut GlobalRouter, &mut App) -> R,
+        F: FnOnce(&mut GlobalRouter, &mut Self) -> R,
     {
         self.update_global(f)
     }
@@ -1448,6 +1448,7 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert_eq!(log[0], "before:/page");
         assert_eq!(log[1], "after:/page");
+        drop(log);
     }
 
     // ========================================================================

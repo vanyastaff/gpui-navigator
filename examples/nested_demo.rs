@@ -160,7 +160,7 @@ impl NestedDemoApp {
 struct HomePage;
 
 impl HomePage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -213,7 +213,7 @@ impl Render for HomePage {
 struct DashboardLayout;
 
 impl DashboardLayout {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -285,7 +285,7 @@ impl DashboardLayout {
 struct OverviewPage;
 
 impl OverviewPage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -313,7 +313,7 @@ impl Render for OverviewPage {
 struct AnalyticsPage;
 
 impl AnalyticsPage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -341,7 +341,7 @@ impl Render for AnalyticsPage {
 struct SettingsPage;
 
 impl SettingsPage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -373,7 +373,7 @@ impl Render for SettingsPage {
 struct ProductsLayout;
 
 impl ProductsLayout {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -404,7 +404,7 @@ impl Render for ProductsLayout {
 struct ProductListPage;
 
 impl ProductListPage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -458,6 +458,7 @@ struct ProductDetailPage {
 }
 
 impl ProductDetailPage {
+    #[allow(clippy::missing_const_for_fn)]
     fn new(product_id: String) -> Self {
         Self { product_id }
     }

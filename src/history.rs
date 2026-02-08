@@ -32,7 +32,7 @@
 use crate::NavigationDirection;
 
 /// Navigation history entry
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
     /// Path for this history entry
     pub path: String,
@@ -42,12 +42,12 @@ pub struct HistoryEntry {
 
 impl HistoryEntry {
     /// Create a new history entry
-    pub fn new(path: String) -> Self {
+    pub const fn new(path: String) -> Self {
         Self { path, state: None }
     }
 
     /// Create with state
-    pub fn with_state(path: String, state: HistoryState) -> Self {
+    pub const fn with_state(path: String, state: HistoryState) -> Self {
         Self {
             path,
             state: Some(state),
@@ -59,7 +59,7 @@ impl HistoryEntry {
 ///
 /// Can store arbitrary data for history restoration
 /// (e.g., scroll position, form data, etc.)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryState {
     /// Key-value pairs for state data
     pub data: std::collections::HashMap<String, String>,
@@ -238,7 +238,7 @@ impl History {
     }
 
     /// Return `true` if [`back`](Self::back) would succeed.
-    pub fn can_go_back(&self) -> bool {
+    pub const fn can_go_back(&self) -> bool {
         self.current > 0
     }
 
@@ -270,7 +270,7 @@ impl History {
     }
 
     /// Return the current cursor position in the stack.
-    pub fn current_index(&self) -> usize {
+    pub const fn current_index(&self) -> usize {
         self.current
     }
 

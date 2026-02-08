@@ -91,6 +91,7 @@ impl CacheStats {
     /// Return the parent-cache hit rate as a value in `0.0..=1.0`.
     ///
     /// Returns `0.0` if no parent lookups have been performed.
+    #[allow(clippy::cast_precision_loss)]
     pub fn parent_hit_rate(&self) -> f64 {
         let total = self.parent_hits + self.parent_misses;
         if total == 0 {
@@ -101,6 +102,7 @@ impl CacheStats {
     }
 
     /// Return the child-cache hit rate as a value in `0.0..=1.0`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn child_hit_rate(&self) -> f64 {
         let total = self.child_hits + self.child_misses;
         if total == 0 {
@@ -111,6 +113,7 @@ impl CacheStats {
     }
 
     /// Return the combined (parent + child) hit rate as a value in `0.0..=1.0`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn overall_hit_rate(&self) -> f64 {
         let total_hits = self.parent_hits + self.child_hits;
         let total_misses = self.parent_misses + self.child_misses;
@@ -202,7 +205,7 @@ impl RouteCache {
     }
 
     /// Return a reference to the current cache statistics.
-    pub fn stats(&self) -> &CacheStats {
+    pub const fn stats(&self) -> &CacheStats {
         &self.stats
     }
 

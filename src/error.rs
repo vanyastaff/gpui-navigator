@@ -102,19 +102,19 @@ pub enum NavigationError {
 impl fmt::Display for NavigationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NavigationError::RouteNotFound { path } => {
+            Self::RouteNotFound { path } => {
                 write!(f, "Route not found: {path}")
             }
-            NavigationError::GuardBlocked { reason } => {
+            Self::GuardBlocked { reason } => {
                 write!(f, "Navigation blocked: {reason}")
             }
-            NavigationError::InvalidParams { message } => {
+            Self::InvalidParams { message } => {
                 write!(f, "Invalid parameters: {message}")
             }
-            NavigationError::NavigationFailed { message } => {
+            Self::NavigationFailed { message } => {
                 write!(f, "Navigation failed: {message}")
             }
-            NavigationError::Custom { message } => {
+            Self::Custom { message } => {
                 write!(f, "{message}")
             }
         }
@@ -125,29 +125,29 @@ impl std::error::Error for NavigationError {}
 
 impl NavigationResult {
     /// Check if navigation was successful
-    pub fn is_success(&self) -> bool {
-        matches!(self, NavigationResult::Success { .. })
+    pub const fn is_success(&self) -> bool {
+        matches!(self, Self::Success { .. })
     }
 
     /// Check if route was not found
-    pub fn is_not_found(&self) -> bool {
-        matches!(self, NavigationResult::NotFound { .. })
+    pub const fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound { .. })
     }
 
     /// Check if navigation was blocked
-    pub fn is_blocked(&self) -> bool {
-        matches!(self, NavigationResult::Blocked { .. })
+    pub const fn is_blocked(&self) -> bool {
+        matches!(self, Self::Blocked { .. })
     }
 
     /// Check if there was an error
-    pub fn is_error(&self) -> bool {
-        matches!(self, NavigationResult::Error(_))
+    pub const fn is_error(&self) -> bool {
+        matches!(self, Self::Error(_))
     }
 
     /// Get redirect path if blocked with redirect
     pub fn redirect_path(&self) -> Option<&str> {
         match self {
-            NavigationResult::Blocked {
+            Self::Blocked {
                 redirect: Some(path),
                 ..
             } => Some(path),

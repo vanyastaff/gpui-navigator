@@ -122,7 +122,7 @@ impl StatefulDemoApp {
 struct HomePage;
 
 impl HomePage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self
     }
 }
@@ -184,7 +184,7 @@ struct CounterPage {
 }
 
 impl CounterPage {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { count: 0 }
     }
 }

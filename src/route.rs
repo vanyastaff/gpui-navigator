@@ -207,11 +207,7 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
             }
 
             // Check for constraint syntax (:id{uuid})
-            let param_name = if let Some(pos) = param.find('{') {
-                &param[..pos]
-            } else {
-                param
-            };
+            let param_name = param.find('{').map_or(param, |pos| &param[..pos]);
 
             // Check parameter name is alphanumeric
             if !param_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -257,7 +253,7 @@ pub struct RouteConfig {
     /// Route name (optional)
     pub name: Option<String>,
     /// Child routes (NOTE: For nested routing, use `Route.children()` instead)
-    pub children: Vec<RouteConfig>,
+    pub children: Vec<Self>,
     /// Route metadata
     pub meta: HashMap<String, String>,
 }
@@ -313,13 +309,13 @@ impl RouteConfig {
     }
 
     /// Add child routes
-    pub fn children(mut self, children: Vec<RouteConfig>) -> Self {
+    pub fn children(mut self, children: Vec<Self>) -> Self {
         self.children = children;
         self
     }
 
     /// Add a child route
-    pub fn child(mut self, child: RouteConfig) -> Self {
+    pub fn child(mut self, child: Self) -> Self {
         self.children.push(child);
         self
     }
@@ -821,7 +817,7 @@ impl Route {
     ///     .transition(Transition::fade(200));
     /// ```
     #[cfg(feature = "transition")]
-    pub fn transition(mut self, transition: crate::transition::Transition) -> Self {
+    pub const fn transition(mut self, transition: crate::transition::Transition) -> Self {
         self.transition = TransitionConfig::new(transition);
         self
     }
@@ -888,7 +884,7 @@ impl std::fmt::Debug for Route {
                 "named_children",
                 &self.named_children.keys().collect::<Vec<_>>(),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

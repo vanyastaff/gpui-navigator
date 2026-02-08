@@ -114,11 +114,10 @@ pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
     let without_colon = segment.trim_start_matches(':');
 
     // Check for constraint delimiter '<'
-    if let Some(pos) = without_colon.find('<') {
-        Cow::Owned(without_colon[..pos].to_string())
-    } else {
-        Cow::Borrowed(without_colon)
-    }
+    without_colon.find('<').map_or_else(
+        || Cow::Borrowed(without_colon),
+        |pos| Cow::Owned(without_colon[..pos].to_string()),
+    )
 }
 
 /// Resolve a child route with recursion depth tracking (T031)
@@ -138,6 +137,7 @@ pub fn resolve_child_route(
 ///
 /// Prevents infinite loops by enforcing `MAX_RECURSION_DEPTH` limit.
 /// Returns None if depth exceeded.
+#[allow(clippy::too_many_lines)]
 fn resolve_child_route_impl(
     parent_route: &Arc<Route>,
     current_path: &str,

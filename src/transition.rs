@@ -85,12 +85,12 @@ pub enum Transition {
 
 impl Transition {
     /// Create a cross-fade transition (old fades out, new fades in simultaneously)
-    pub fn fade(duration_ms: u64) -> Self {
+    pub const fn fade(duration_ms: u64) -> Self {
         Self::Fade { duration_ms }
     }
 
     /// Create a slide-left transition
-    pub fn slide_left(duration_ms: u64) -> Self {
+    pub const fn slide_left(duration_ms: u64) -> Self {
         Self::Slide {
             direction: SlideDirection::Left,
             duration_ms,
@@ -98,7 +98,7 @@ impl Transition {
     }
 
     /// Create a slide-right transition
-    pub fn slide_right(duration_ms: u64) -> Self {
+    pub const fn slide_right(duration_ms: u64) -> Self {
         Self::Slide {
             direction: SlideDirection::Right,
             duration_ms,
@@ -106,7 +106,7 @@ impl Transition {
     }
 
     /// Create a slide-up transition
-    pub fn slide_up(duration_ms: u64) -> Self {
+    pub const fn slide_up(duration_ms: u64) -> Self {
         Self::Slide {
             direction: SlideDirection::Up,
             duration_ms,
@@ -114,7 +114,7 @@ impl Transition {
     }
 
     /// Create a slide-down transition
-    pub fn slide_down(duration_ms: u64) -> Self {
+    pub const fn slide_down(duration_ms: u64) -> Self {
         Self::Slide {
             direction: SlideDirection::Down,
             duration_ms,
@@ -122,7 +122,7 @@ impl Transition {
     }
 
     /// Get the duration of this transition
-    pub fn duration(&self) -> Duration {
+    pub const fn duration(&self) -> Duration {
         match self {
             Self::None => Duration::ZERO,
             Self::Fade { duration_ms, .. } | Self::Slide { duration_ms, .. } => {
@@ -132,7 +132,7 @@ impl Transition {
     }
 
     /// Check if this is a no-op transition
-    pub fn is_none(&self) -> bool {
+    pub const fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
 }
@@ -161,7 +161,7 @@ impl Default for TransitionConfig {
 
 impl TransitionConfig {
     /// Create a new transition config with a default transition
-    pub fn new(default: Transition) -> Self {
+    pub const fn new(default: Transition) -> Self {
         Self {
             default,
             override_next: None,
@@ -184,7 +184,7 @@ impl TransitionConfig {
     }
 
     /// Check if there's an active override
-    pub fn has_override(&self) -> bool {
+    pub const fn has_override(&self) -> bool {
         self.override_next.is_some()
     }
 }
@@ -247,7 +247,7 @@ pub fn ease_in_out_cubic(t: f32) -> f32 {
     if t < 0.5 {
         4.0 * t * t * t
     } else {
-        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+        1.0 - (-2.0f32).mul_add(t, 2.0).powi(3) / 2.0
     }
 }
 
