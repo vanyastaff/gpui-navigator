@@ -294,7 +294,7 @@ fn resolve_child_route_impl(
                         "Parameter collision: child route '{}' shadows parent parameter '{}' (parent value: '{}', child value: '{}')",
                         child.config.path,
                         param_name,
-                        parent_params.get(&param_name).unwrap_or(&"<none>".to_string()),
+                        parent_params.get(&param_name).map_or("<none>", String::as_str),
                         first_segment
                     );
                 }
@@ -321,7 +321,7 @@ fn resolve_child_route_impl(
 
                 // Recursively resolve the child route with the remaining path (T031: pass depth + 1)
                 if let Some((grandchild, grandchild_params)) = resolve_child_route_impl(
-                    &child,
+                    child,
                     &remaining_path,
                     &combined_params,
                     outlet_name,

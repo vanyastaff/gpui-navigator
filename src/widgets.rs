@@ -802,6 +802,7 @@ pub struct DefaultPages {
     /// Custom loading page builder
     pub loading: Option<Box<dyn Fn() -> AnyElement + Send + Sync>>,
     /// Custom error page builder
+    #[allow(clippy::type_complexity)]
     pub error: Option<Box<dyn Fn(&str) -> AnyElement + Send + Sync>>,
 }
 
