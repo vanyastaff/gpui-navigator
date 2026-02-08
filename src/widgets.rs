@@ -734,7 +734,6 @@ impl RouterLink {
             MouseButton::Left,
             cx.listener(move |_view, _event, _window, cx| {
                 Navigator::push(cx, path.to_string());
-                cx.notify();
             }),
         );
 
@@ -778,7 +777,6 @@ pub fn router_link<V: 'static>(
             MouseButton::Left,
             cx.listener(move |_view, _event, _window, cx| {
                 Navigator::push(cx, path_str.to_string());
-                cx.notify();
             }),
         )
 }

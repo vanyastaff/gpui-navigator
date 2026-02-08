@@ -92,7 +92,6 @@ impl StatefulDemoApp {
     fn nav_button(&self, cx: &mut Context<'_, Self>, path: &str, label: &str) -> impl IntoElement {
         let path = path.to_string();
         let label = label.to_string();
-        let outlet = self.outlet.clone();
 
         div()
             .px_4()
@@ -105,7 +104,6 @@ impl StatefulDemoApp {
                 MouseButton::Left,
                 cx.listener(move |_view, _event, _window, cx| {
                     Navigator::push(cx, path.clone());
-                    outlet.update(cx, |_, cx| cx.notify());
                 }),
             )
             .child(label)

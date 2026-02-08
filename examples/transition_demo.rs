@@ -98,7 +98,7 @@ impl Render for TransitionDemoApp {
                 div()
                     .flex()
                     .flex_1()
-                    .child(sidebar(cx, self.outlet.clone()))
+                    .child(sidebar(cx))
                     .child(div().flex_1().child(self.outlet.clone())),
             )
     }
@@ -120,10 +120,7 @@ fn header() -> impl IntoElement {
         )
 }
 
-fn sidebar(
-    cx: &mut Context<'_, TransitionDemoApp>,
-    outlet: Entity<RouterOutlet>,
-) -> impl IntoElement {
+fn sidebar(cx: &mut Context<'_, TransitionDemoApp>) -> impl IntoElement {
     let current_path = Navigator::current_path(cx);
 
     div()
@@ -135,48 +132,12 @@ fn sidebar(
         .border_color(rgb(0xe0e0e0))
         .p_4()
         .gap_2()
-        .child(nav_button(
-            cx,
-            "Home (No Transition)",
-            "/",
-            &current_path,
-            outlet.clone(),
-        ))
-        .child(nav_button(
-            cx,
-            "Fade",
-            "/fade",
-            &current_path,
-            outlet.clone(),
-        ))
-        .child(nav_button(
-            cx,
-            "Slide Left",
-            "/slide-left",
-            &current_path,
-            outlet.clone(),
-        ))
-        .child(nav_button(
-            cx,
-            "Slide Right",
-            "/slide-right",
-            &current_path,
-            outlet.clone(),
-        ))
-        .child(nav_button(
-            cx,
-            "Slide Up",
-            "/slide-up",
-            &current_path,
-            outlet.clone(),
-        ))
-        .child(nav_button(
-            cx,
-            "Slide Down",
-            "/slide-down",
-            &current_path,
-            outlet.clone(),
-        ))
+        .child(nav_button(cx, "Home (No Transition)", "/", &current_path))
+        .child(nav_button(cx, "Fade", "/fade", &current_path))
+        .child(nav_button(cx, "Slide Left", "/slide-left", &current_path))
+        .child(nav_button(cx, "Slide Right", "/slide-right", &current_path))
+        .child(nav_button(cx, "Slide Up", "/slide-up", &current_path))
+        .child(nav_button(cx, "Slide Down", "/slide-down", &current_path))
         .child(div().h_px().bg(rgb(0xe0e0e0)).my_4())
         .child(
             div()
@@ -191,7 +152,6 @@ fn nav_button(
     label: &str,
     path: &str,
     current_path: &str,
-    outlet: Entity<RouterOutlet>,
 ) -> impl IntoElement {
     let is_active = current_path == path;
     let path = path.to_string();
@@ -217,7 +177,6 @@ fn nav_button(
             MouseButton::Left,
             cx.listener(move |_view, _event, _window, cx| {
                 Navigator::push(cx, path.clone());
-                outlet.update(cx, |_, cx| cx.notify());
             }),
         )
         .child(label_str)
