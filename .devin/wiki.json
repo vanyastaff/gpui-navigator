@@ -1,0 +1,108 @@
+{
+  "repo_notes": [
+    "gpui-navigator is a declarative client-side navigation library for GPUI (Zed's GPU-accelerated UI framework). It provides route matching, nested layouts, animated transitions, guards, middleware, and LRU caching.",
+    "The core navigation flow: init_router() registers routes globally -> Navigator::push/replace/pop triggers route matching via resolve_match_stack -> Guards and middleware run in priority order -> RouterView renders the root match, RouterOutlet renders children at each nesting depth -> Transitions animate between old and new content.",
+    "Route definition uses a builder pattern: Route::view (stateless), Route::component (stateful Entity cached), Route::component_with_params (stateful + params), Route::new (full Window/App/Params access). All return Route which supports chaining .children(), .name(), .guard(), .middleware(), .lifecycle(), .transition().",
+    "Nested routing supports unlimited depth. RouterOutlet increments depth on each nesting level. Named outlets allow multiple content areas. Index routes (empty path children) render at the parent path. Child routes inherit parent parameters automatically.",
+    "Feature flags control optional functionality: guard (AuthGuard, RoleGuard, PermissionGuard, NotGuard), middleware (before/after hooks), transition (fade, slide animations), cache (LRU via lru crate), log/tracing (mutually exclusive logging backends). All except tracing are enabled by default.",
+    "The project strictly forbids unsafe code (enforced in Cargo.toml lints). Clippy pedantic + nursery + cargo lints are enabled. All public APIs require rustdoc documentation.",
+    "Key architectural boundary: context.rs is the only module that directly touches GPUI globals (Global<RouterState>). All other modules are pure Rust with no GPUI dependency in their core logic, making them independently testable.",
+    "Testing: 285+ tests across unit tests (src modules), integration tests (tests/), nested navigation tests, resolve tests, and doc-tests. Tests requiring GPUI context use #[gpui::test] macro."
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "High-level introduction to gpui-navigator: what it is, why it exists, core concepts (routes, navigation, outlets, guards), and how the library fits into a GPUI application."
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Installation, minimal example with init_router + RouterView, first navigation with Navigator::push, and running the included examples.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Architecture",
+      "purpose": "System architecture diagram showing the full navigation flow: init_router -> GlobalRouter -> MatchStack resolution -> Guard/Middleware pipeline -> RouterView/RouterOutlet rendering -> Transition animation. Module dependency map and key data structures.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Route Definition",
+      "purpose": "Complete guide to defining routes: Route::view, Route::component, Route::component_with_params, Route::new. Builder methods: .children(), .child(), .name(), .meta(), .named_outlet(). RouteConfig internals and validation rules.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Navigation API",
+      "purpose": "Navigator static methods (push, replace, pop, forward, back, current_path, can_pop, can_go_forward). Fluent API via Navigator::of(cx). Named route navigation with push_named and url_for. NavigationRequest structure.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Nested Routing",
+      "purpose": "How nested routing works: parent-child route hierarchies, RouterOutlet depth tracking, named outlets, index routes (empty path), parameter inheritance across levels, path normalization, and the resolve_child_route algorithm in nested.rs.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Route Resolution",
+      "purpose": "How paths are matched to routes: resolve_match_stack in resolve.rs, MatchStack and MatchEntry structures, depth tracking with enter_outlet/set_parent_depth/reset_outlet_depth, segment-based matching in matching.rs.",
+      "parent": "Architecture"
+    },
+    {
+      "title": "Widgets",
+      "purpose": "RouterView (top-level renderer at depth 0), RouterOutlet (child renderer with depth increment), RouterLink (navigation link with active-state detection), DefaultPages (customizable 404/error/loading pages). Both struct and functional APIs.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Route Parameters",
+      "purpose": "RouteParams for path parameters (:id syntax), type-safe extraction with get_as::<T>(), from_path constructor, merge for parent-child inheritance. QueryParams for query strings with multi-value support, from_query_string, to_query_string.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Transitions",
+      "purpose": "Transition enum (None, Fade, Slide with 4 directions), TransitionConfig with override support, dual animation system (exit + enter simultaneously), Navigator::push_with_transition and set_next_transition. Feature-gated behind 'transition'.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Route Guards",
+      "purpose": "RouteGuard trait (check method returning NavigationAction), built-in guards: AuthGuard, RoleGuard, PermissionGuard, NotGuard (inversion). Guards composition, priority ordering, guard_fn helper. Feature-gated behind 'guard'.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Middleware",
+      "purpose": "RouteMiddleware trait (before_navigation, after_navigation), priority ordering (higher priority runs first for before, last for after), middleware_fn closure helper. Feature-gated behind 'middleware'.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Route Lifecycle",
+      "purpose": "RouteLifecycle trait: on_enter (can redirect/deny on activation), on_exit (cleanup), can_deactivate (block navigation away). NavigationAction enum: Continue, Deny, Redirect with variants.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Error Handling",
+      "purpose": "NavigationResult (Success, NotFound, Blocked, Error), NavigationError variants, ErrorHandlers for custom error rendering, DefaultPages for global 404/error/loading fallbacks.",
+      "parent": "Overview"
+    },
+    {
+      "title": "State Management",
+      "purpose": "RouterState as the centralized navigation state stored in GPUI Global. Router struct managing routes, history, cache, and named routes. How GlobalRouter wraps RouterState for the public API in context.rs.",
+      "parent": "Architecture"
+    },
+    {
+      "title": "History",
+      "purpose": "Navigation history stack implementation: push, replace, back, forward operations. Max size enforcement with truncation. NavigationEvent tracking. State preservation across history entries.",
+      "parent": "Architecture"
+    },
+    {
+      "title": "Caching",
+      "purpose": "RouteCache LRU implementation for route resolution results. CacheStats with hit/miss tracking and hit_rate calculations. RouteId for cache keys. Feature-gated behind 'cache' with lru dependency.",
+      "parent": "Architecture"
+    },
+    {
+      "title": "Logging",
+      "purpose": "Unified logging macros (trace_log!, debug_log!, info_log!, warn_log!, error_log!) that dispatch to either log or tracing crate based on feature flags. Mutually exclusive backends.",
+      "parent": "Architecture"
+    },
+    {
+      "title": "Testing Guide",
+      "purpose": "Test organization: tests/unit/ mirrors src/ structure, tests/integration/ for cross-module tests. Using #[gpui::test] for GPUI context tests. Running tests with cargo test --all-features. Test naming conventions.",
+      "parent": "Overview"
+    }
+  ]
+}
