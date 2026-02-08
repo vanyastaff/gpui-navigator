@@ -226,26 +226,188 @@ fn test_match_stack_helpers() {
     assert_eq!(stack.leaf().unwrap().route.config.path, "b");
 }
 
-// ---- depth tracking tests ----
+// ---- depth tracking tests (PARENT_DEPTH approach) ----
+//
+// PARENT_DEPTH is a single thread-local Option<usize>:
+// - None → next outlet is ROOT (depth 0)
+// - Some(d) → next outlet is CHILD (depth d+1)
+//
+// enter_outlet() reads PARENT_DEPTH, computes my_depth, sets PARENT_DEPTH=Some(my_depth).
+// No exit/restore needed — GPUI renders depth-first, so PARENT_DEPTH is always
+// correct when child Entity<RouterOutlet>::render() runs.
 
 #[test]
-fn test_depth_tracking() {
+fn test_depth_tracking_basic() {
     reset_outlet_depth();
-    assert_eq!(current_outlet_depth(), 0);
+    assert_eq!(current_parent_depth(), None);
 
-    let d1 = claim_outlet_depth();
+    // First enter_outlet: PARENT_DEPTH=None → ROOT → depth=0
+    let d1 = enter_outlet();
+    assert_eq!(d1, 0);
+    assert_eq!(current_parent_depth(), Some(0));
+
+    // Second enter_outlet: PARENT_DEPTH=Some(0) → CHILD → depth=1
+    let d2 = enter_outlet();
+    assert_eq!(d2, 1);
+    assert_eq!(current_parent_depth(), Some(1));
+
+    // Third: depth=2
+    let d3 = enter_outlet();
+    assert_eq!(d3, 2);
+    assert_eq!(current_parent_depth(), Some(2));
+}
+
+// ---- Pattern 1: router_view + outlets (nested routing) ----
+
+#[test]
+fn test_pattern1_router_view_with_outlets() {
+    // router_view resets to None, then enters as root
+    reset_outlet_depth();
+
+    // router_view: reset → enter → depth 0
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0);
+    assert_eq!(current_parent_depth(), Some(0));
+
+    // outlet A inside router_view's builder
+    let d1 = enter_outlet();
     assert_eq!(d1, 1);
-    assert_eq!(current_outlet_depth(), 1);
 
-    let d2 = claim_outlet_depth();
+    // outlet B inside outlet A's builder
+    let d2 = enter_outlet();
     assert_eq!(d2, 2);
 
-    // Simulate returning from nested outlet
-    set_outlet_depth(1);
+    assert_eq!(current_parent_depth(), Some(2));
+}
+
+// ---- Pattern 2: standalone RouterOutlet (no router_view) ----
+
+#[test]
+fn test_pattern2_nested_demo_app() {
+    // Simulates NestedDemoApp: standalone outlet → DashboardLayout → AnalyticsPage
+    // No router_view — outlet is root.
+    reset_outlet_depth();
+
+    // NestedDemoApp's outlet renders (PARENT_DEPTH=None → ROOT → depth=0)
+    let d_root = enter_outlet();
+    assert_eq!(d_root, 0);
+    assert_eq!(current_parent_depth(), Some(0));
+
+    // DashboardLayout's outlet renders (PARENT_DEPTH=Some(0) → CHILD → depth=1)
+    let d_child = enter_outlet();
+    assert_eq!(d_child, 1);
+    assert_eq!(current_parent_depth(), Some(1));
+}
+
+// ---- Pattern 3: flat routes, single standalone outlet ----
+
+#[test]
+fn test_pattern3_transition_demo_flat() {
+    reset_outlet_depth();
+
+    let d = enter_outlet(); // PARENT_DEPTH=None → ROOT → depth=0
+    assert_eq!(d, 0);
+    assert_eq!(current_parent_depth(), Some(0));
+}
+
+// ---- Consecutive render passes with reset ----
+
+#[test]
+fn test_consecutive_renders_with_reset() {
+    // Render pass 1: /dashboard/analytics (2 levels)
+    reset_outlet_depth();
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0);
+    let d1 = enter_outlet();
+    assert_eq!(d1, 1);
+
+    // Render pass 2: reset before new render (simulates router_view or new frame)
+    reset_outlet_depth();
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0); // correctly starts from root again
+    let d1 = enter_outlet();
+    assert_eq!(d1, 1);
+}
+
+// ---- Navigation changes stack depth between renders ----
+
+#[test]
+fn test_navigation_changes_depth() {
+    // Render 1: /dashboard/analytics (2 levels)
+    reset_outlet_depth();
+    let d0 = enter_outlet();
+    let d1 = enter_outlet();
+    assert_eq!(d0, 0);
+    assert_eq!(d1, 1);
+
+    // Navigation: push("/") — match_stack becomes 1 entry
+
+    // Render 2: / (1 level only)
+    reset_outlet_depth();
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0);
+    // HomePage has no outlets — done
+
+    // Navigation: push("/products/3") — match_stack becomes 2 entries
+
+    // Render 3: /products/3 (2 levels)
+    reset_outlet_depth();
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0);
+    let d1 = enter_outlet();
+    assert_eq!(d1, 1);
+}
+
+// ---- Deep nesting: 4 levels ----
+
+#[test]
+fn test_four_level_nesting() {
+    reset_outlet_depth();
+
+    // / → app → workspace/:id → project/:pid
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0);
+    let d1 = enter_outlet();
+    assert_eq!(d1, 1);
+    let d2 = enter_outlet();
+    assert_eq!(d2, 2);
+    let d3 = enter_outlet();
+    assert_eq!(d3, 3);
+
+    assert_eq!(current_parent_depth(), Some(3));
+}
+
+// ---- Reset between different patterns ----
+
+#[test]
+fn test_router_view_then_standalone() {
+    // First: router_view pattern (reset + enter)
+    reset_outlet_depth();
+    let d0 = enter_outlet();
+    assert_eq!(d0, 0);
+    let d1 = enter_outlet();
+    assert_eq!(d1, 1);
+
+    // Second: standalone pattern — must reset first
+    reset_outlet_depth();
+    let d = enter_outlet();
+    assert_eq!(d, 0); // correctly root
+}
+
+// ---- current_outlet_depth returns next child depth ----
+
+#[test]
+fn test_current_outlet_depth() {
+    reset_outlet_depth();
+    // No parent → current_outlet_depth returns 0 (root would be depth 0)
+    assert_eq!(current_outlet_depth(), 0);
+
+    enter_outlet(); // depth 0, sets PARENT_DEPTH=Some(0)
+                    // Next child would be at depth 1
     assert_eq!(current_outlet_depth(), 1);
 
-    set_outlet_depth(0);
-    assert_eq!(current_outlet_depth(), 0);
+    enter_outlet(); // depth 1, sets PARENT_DEPTH=Some(1)
+    assert_eq!(current_outlet_depth(), 2);
 }
 
 #[test]

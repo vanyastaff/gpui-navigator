@@ -49,42 +49,117 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 // ============================================================================
-// Depth Tracking (thread-local)
+// Depth Tracking (thread-local, PARENT_DEPTH approach)
 // ============================================================================
+//
+// # Why not NESTING counter?
+//
+// GPUI renders Entity<T> **after** the parent builder returns — NOT inline.
+// `Route::component()` returns `Entity<T>.into_any_element()` as a blueprint;
+// GPUI calls `T::render()` later during layout/paint.
+//
+// This means any save/restore pattern (enter/exit with NESTING counter)
+// breaks: by the time child `RouterOutlet::render()` runs, the parent
+// already called `exit_outlet()` and the counter is reset.
+//
+// # Solution: PARENT_DEPTH
+//
+// A single thread-local `Option<usize>`:
+// - `None` → next outlet is ROOT → depth = 0
+// - `Some(d)` → next outlet is CHILD of depth `d` → depth = d + 1
+//
+// Each outlet:
+// 1. Reads PARENT_DEPTH to determine its own depth
+// 2. Sets PARENT_DEPTH = Some(my_depth) before `route.build()`
+// 3. Does NOT restore PARENT_DEPTH after build
+//
+// This works because GPUI renders depth-first: when child `T::render()` runs,
+// PARENT_DEPTH still holds the value set by its parent outlet.
+//
+// # Render flow
+//
+// ```text
+// NestedDemoApp::render()                   PARENT_DEPTH=None
+//   └─ .child(self.outlet.clone())
+//      // GPUI calls RouterOutlet::render()
+//      RouterOutlet::render()
+//        PARENT_DEPTH=None → ROOT → my_depth=0
+//        set PARENT_DEPTH=Some(0)
+//        route.build() → Entity<DashboardLayout>.into_any_element()
+//        (no restore!)
+//
+//      // GPUI processes element tree, calls DashboardLayout::render()
+//      DashboardLayout::render()            PARENT_DEPTH=Some(0)
+//        .child(outlet.clone())
+//        // GPUI calls child RouterOutlet::render()
+//        RouterOutlet::render()
+//          PARENT_DEPTH=Some(0) → CHILD → my_depth=1
+//          set PARENT_DEPTH=Some(1)
+//          route.build() → AnalyticsPage
+//          stack.at_depth(1) → Route("analytics")
+// ```
 
 thread_local! {
-    /// Current outlet depth during rendering.
-    /// Set by `router_view` (to 0) and incremented by each outlet.
-    static OUTLET_DEPTH: Cell<usize> = const { Cell::new(0) };
+    /// Depth of the parent outlet that last called `route.build()`.
+    /// `None` means no parent → next outlet is root (depth 0).
+    /// `Some(d)` means parent is at depth `d` → next outlet is at `d + 1`.
+    ///
+    /// Used ONLY for initial depth discovery when an outlet first renders.
+    /// After that, outlets store their depth in their own field.
+    static PARENT_DEPTH: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-/// Reset outlet depth to 0. Called at the start of `router_view`.
-pub fn reset_outlet_depth() {
-    OUTLET_DEPTH.with(|d| d.set(0));
-}
-
-/// Claim the next outlet depth. Returns the depth this outlet should render.
+/// Discover the depth for a NEW outlet rendering for the first time.
 ///
-/// Called by `render_router_outlet()` and `RouterOutlet::render()`.
-/// The caller should render `match_stack[returned_depth]`.
-pub fn claim_outlet_depth() -> usize {
-    OUTLET_DEPTH.with(|d| {
-        let current = d.get();
-        let next = current + 1;
-        d.set(next);
-        next
-    })
+/// Returns `my_depth` — the match stack index this outlet should render.
+///
+/// - If `PARENT_DEPTH` is `None`: this is ROOT → depth = 0
+/// - If `PARENT_DEPTH` is `Some(d)`: this is CHILD → depth = d + 1
+///
+/// Also sets `PARENT_DEPTH = Some(my_depth)` so that child outlets
+/// created inside this outlet's builder get the correct depth.
+///
+/// This should only be called ONCE per outlet (on first render).
+/// After that, use `set_parent_depth()` with the saved depth.
+pub fn enter_outlet() -> usize {
+    let parent = PARENT_DEPTH.with(|p| p.get());
+
+    let my_depth = match parent {
+        None => 0,        // ROOT outlet
+        Some(d) => d + 1, // CHILD outlet
+    };
+
+    // Set for children rendered inside our builder
+    PARENT_DEPTH.with(|p| p.set(Some(my_depth)));
+
+    my_depth
 }
 
-/// Set outlet depth explicitly. Used by `RouterOutlet::render()` to
-/// ensure nested outlets created inside its builder get the correct depth.
-pub fn set_outlet_depth(depth: usize) {
-    OUTLET_DEPTH.with(|d| d.set(depth));
+/// Set PARENT_DEPTH to `depth` so child outlets see the correct parent.
+///
+/// Called by outlets that already know their depth (from a previous render).
+/// This ensures that child outlets created via `enter_outlet()` or
+/// rendered as deferred Entity components get `depth + 1`.
+pub fn set_parent_depth(depth: usize) {
+    PARENT_DEPTH.with(|p| p.set(Some(depth)));
 }
 
-/// Get current outlet depth without modifying it.
+/// Reset outlet tracking state to "no parent".
+///
+/// Called by `router_view()` at the start of a render cycle,
+/// or between render passes to ensure clean state.
+pub fn reset_outlet_depth() {
+    PARENT_DEPTH.with(|p| p.set(None));
+}
+
+/// Get current outlet depth without modifying state. Used by named outlets.
 pub fn current_outlet_depth() -> usize {
-    OUTLET_DEPTH.with(|d| d.get())
+    PARENT_DEPTH.with(|p| p.get().map_or(0, |d| d + 1))
+}
+
+/// Get the raw parent depth value (for debugging/testing).
+pub fn current_parent_depth() -> Option<usize> {
+    PARENT_DEPTH.with(|p| p.get())
 }
 
 // ============================================================================
