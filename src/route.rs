@@ -482,9 +482,10 @@ impl Route {
     {
         let path_str = path.into();
         let key_path = path_str.clone();
+        let type_id = std::any::TypeId::of::<T>();
 
         Self::new(path_str, move |_window, cx, _| {
-            let key = format!("route:{}", key_path);
+            let key = format!("route:{}:{:?}", key_path, type_id);
 
             // Check the global component cache first (survives across navigations)
             if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
@@ -550,15 +551,16 @@ impl Route {
     {
         let path_str = path.into();
         let key_path = path_str.clone();
+        let type_id = std::any::TypeId::of::<T>();
 
         Self::new(path_str, move |_window, cx, params| {
-            // Create unique key from path + parameter values
+            // Create unique key from path + type + parameter values
             let params_key = params
                 .iter()
                 .map(|(k, v)| format!("{}={}", k, v))
                 .collect::<Vec<_>>()
                 .join("&");
-            let key = format!("route:{}?{}", key_path, params_key);
+            let key = format!("route:{}:{:?}?{}", key_path, type_id, params_key);
 
             // Check the global component cache first (survives across navigations)
             if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
