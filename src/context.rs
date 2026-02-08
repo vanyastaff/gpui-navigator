@@ -14,8 +14,9 @@ use crate::route::NamedRouteRegistry;
 #[cfg(feature = "transition")]
 use crate::transition::Transition;
 use crate::{IntoRoute, Route, RouteParams, RouterState};
-use gpui::{App, BorrowAppContext, Global};
+use gpui::{AnyView, App, BorrowAppContext, Global};
 use std::borrow::BorrowMut;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Maximum redirect depth to prevent infinite redirect loops.
@@ -108,6 +109,11 @@ pub struct GlobalRouter {
     named_routes: NamedRouteRegistry,
     #[cfg(feature = "transition")]
     next_transition: Option<Transition>,
+    /// Cache for component entities created by `Route::component()`.
+    /// Unlike `window.use_keyed_state()` which is frame-scoped, this cache
+    /// persists across navigations so that component state survives when the
+    /// user navigates away and back.
+    component_cache: HashMap<String, AnyView>,
 }
 
 impl GlobalRouter {
@@ -123,6 +129,7 @@ impl GlobalRouter {
             named_routes: NamedRouteRegistry::new(),
             #[cfg(feature = "transition")]
             next_transition: None,
+            component_cache: HashMap::new(),
         }
     }
 
@@ -512,6 +519,20 @@ impl GlobalRouter {
     }
 
     // ========================================================================
+    // Component cache
+    // ========================================================================
+
+    /// Get a cached component view by key.
+    pub fn get_cached_component(&self, key: &str) -> Option<&AnyView> {
+        self.component_cache.get(key)
+    }
+
+    /// Store a component view in the cache.
+    pub fn cache_component(&mut self, key: String, view: AnyView) {
+        self.component_cache.insert(key, view);
+    }
+
+    // ========================================================================
     // Transitions
     // ========================================================================
 
@@ -676,6 +697,7 @@ pub fn navigate(cx: &mut App, path: impl Into<String>) {
     cx.update_global::<GlobalRouter, _>(|router, cx| {
         router.push(path, cx);
     });
+    cx.refresh_windows();
 }
 
 /// Get current path from global router.
@@ -702,6 +724,7 @@ impl<C: BorrowAppContext + BorrowMut<App>> NavigatorHandle<'_, C> {
             let app: &App = cx.borrow_mut();
             router.push(descriptor.path, app);
         });
+        self.cx.borrow_mut().refresh_windows();
         self
     }
 
@@ -712,6 +735,7 @@ impl<C: BorrowAppContext + BorrowMut<App>> NavigatorHandle<'_, C> {
             let app: &App = cx.borrow_mut();
             router.replace(descriptor.path, app);
         });
+        self.cx.borrow_mut().refresh_windows();
         self
     }
 
@@ -721,6 +745,7 @@ impl<C: BorrowAppContext + BorrowMut<App>> NavigatorHandle<'_, C> {
             let app: &App = cx.borrow_mut();
             router.back(app);
         });
+        self.cx.borrow_mut().refresh_windows();
         self
     }
 
@@ -730,6 +755,7 @@ impl<C: BorrowAppContext + BorrowMut<App>> NavigatorHandle<'_, C> {
             let app: &App = cx.borrow_mut();
             router.forward(app);
         });
+        self.cx.borrow_mut().refresh_windows();
         self
     }
 }
@@ -772,6 +798,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.push(descriptor.path, app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Replace current path without adding to history.
@@ -781,6 +808,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.replace(descriptor.path, app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Go back to the previous route.
@@ -789,6 +817,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.back(app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Alias for [`pop`](Navigator::pop).
@@ -802,6 +831,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.forward(app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Get current path.
@@ -836,6 +866,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.push_named(&name, &params, app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Generate URL for a named route.
@@ -863,6 +894,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.push_with_transition(descriptor.path, transition, app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Replace with a specific transition.
@@ -877,6 +909,7 @@ impl Navigator {
             let app: &App = cx.borrow_mut();
             router.replace_with_transition(descriptor.path, transition, app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 
     /// Push named route with a specific transition.
@@ -894,6 +927,7 @@ impl Navigator {
             router.set_next_transition(transition);
             router.push_named(&name, &params, app);
         });
+        cx.borrow_mut().refresh_windows();
     }
 }
 

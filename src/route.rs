@@ -9,7 +9,7 @@ use crate::params::RouteParams;
 #[cfg(feature = "transition")]
 use crate::transition::TransitionConfig;
 use crate::RouteMatch;
-use gpui::{AnyElement, App, IntoElement, Render, Window};
+use gpui::{AnyElement, AnyView, App, AppContext, BorrowAppContext, IntoElement, Render, Window};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -393,12 +393,30 @@ impl Route {
         let path_str = path.into();
         let key_path = path_str.clone();
 
-        Self::new(path_str, move |window, cx, _| {
+        Self::new(path_str, move |_window, cx, _| {
             let key = format!("route:{}", key_path);
+
+            // Check the global component cache first (survives across navigations)
+            if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
+                if let Some(cached) = router.get_cached_component(&key) {
+                    return cached.clone().into_any_element();
+                }
+            }
+
+            // Not cached — create a new entity and cache it
             let create_fn = create.clone();
-            let entity =
-                window.use_keyed_state(gpui::ElementId::Name(key.into()), cx, |_, _| create_fn());
-            entity.clone().into_any_element()
+            let entity: gpui::Entity<T> = cx.new(|_| create_fn());
+            let view: AnyView = entity.into();
+
+            if cx.try_global::<crate::context::GlobalRouter>().is_some() {
+                cx.update_global::<crate::context::GlobalRouter, _>(
+                    |router: &mut crate::context::GlobalRouter, _| {
+                        router.cache_component(key, view.clone());
+                    },
+                );
+            }
+
+            view.into_any_element()
         })
     }
 
@@ -443,7 +461,7 @@ impl Route {
         let path_str = path.into();
         let key_path = path_str.clone();
 
-        Self::new(path_str, move |window, cx, params| {
+        Self::new(path_str, move |_window, cx, params| {
             // Create unique key from path + parameter values
             let params_key = params
                 .iter()
@@ -452,13 +470,28 @@ impl Route {
                 .join("&");
             let key = format!("route:{}?{}", key_path, params_key);
 
+            // Check the global component cache first (survives across navigations)
+            if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
+                if let Some(cached) = router.get_cached_component(&key) {
+                    return cached.clone().into_any_element();
+                }
+            }
+
+            // Not cached — create a new entity and cache it
             let params_clone = params.clone();
             let create_fn = create.clone();
-            let entity =
-                window.use_keyed_state(gpui::ElementId::Name(key.into()), cx, move |_, _| {
-                    create_fn(&params_clone)
-                });
-            entity.clone().into_any_element()
+            let entity: gpui::Entity<T> = cx.new(|_| create_fn(&params_clone));
+            let view: AnyView = entity.into();
+
+            if cx.try_global::<crate::context::GlobalRouter>().is_some() {
+                cx.update_global::<crate::context::GlobalRouter, _>(
+                    |router: &mut crate::context::GlobalRouter, _| {
+                        router.cache_component(key, view.clone());
+                    },
+                );
+            }
+
+            view.into_any_element()
         })
     }
 
