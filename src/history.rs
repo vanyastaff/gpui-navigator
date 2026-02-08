@@ -1,10 +1,33 @@
-//! Navigation history management
+//! Navigation history management.
 //!
-//! Manages the navigation history stack with support for:
-//! - Forward/backward navigation
-//! - History truncation on new navigation
-//! - Configurable history limits
-//! - History clearing
+//! This module provides a standalone [`History`] stack that is independent of
+//! the route tree. It stores [`HistoryEntry`] values (path + optional
+//! [`HistoryState`]) and supports:
+//!
+//! - **Push / replace** — add or overwrite the current entry.
+//! - **Back / forward** — move a cursor through the stack.
+//! - **Truncation** — forward entries are discarded on push (browser semantics).
+//! - **Size limit** — configurable maximum via [`History::with_max_size`].
+//! - **State persistence** — attach arbitrary key-value data (scroll position,
+//!   form state, etc.) to each entry.
+//! - **Serialization** — [`entries`](History::entries) /
+//!   [`restore`](History::restore) for save/load workflows.
+//!
+//! # Examples
+//!
+//! ```
+//! use gpui_navigator::history::History;
+//!
+//! let mut history = History::new("/".to_string());
+//! history.push("/users".to_string());
+//! history.push("/users/42".to_string());
+//!
+//! assert_eq!(history.current_path(), "/users/42");
+//!
+//! history.back();
+//! assert_eq!(history.current_path(), "/users");
+//! assert!(history.can_go_forward());
+//! ```
 
 use crate::NavigationDirection;
 
@@ -67,19 +90,22 @@ impl Default for HistoryState {
     }
 }
 
-/// Navigation history stack
+/// Navigation history stack with configurable size limit.
+///
+/// Follows browser-like semantics: pushing a new entry truncates any forward
+/// history, and an optional `max_size` evicts the oldest entries when exceeded.
 #[derive(Debug, Clone)]
 pub struct History {
-    /// History stack
+    /// History stack.
     entries: Vec<HistoryEntry>,
-    /// Current position in history
+    /// Current position (cursor) in the stack.
     current: usize,
-    /// Maximum history size (0 = unlimited)
+    /// Maximum number of entries. `0` means unlimited.
     max_size: usize,
 }
 
 impl History {
-    /// Create a new history with initial path
+    /// Create a new history with the given initial path and a default limit of 1000 entries.
     pub fn new(initial_path: String) -> Self {
         Self {
             entries: vec![HistoryEntry::new(initial_path)],
@@ -88,7 +114,7 @@ impl History {
         }
     }
 
-    /// Create with custom max size
+    /// Create a new history with a custom maximum size (`0` = unlimited).
     pub fn with_max_size(initial_path: String, max_size: usize) -> Self {
         Self {
             entries: vec![HistoryEntry::new(initial_path)],
@@ -97,12 +123,12 @@ impl History {
         }
     }
 
-    /// Get current path
+    /// Return the path of the current (cursor) entry.
     pub fn current_path(&self) -> &str {
         &self.entries[self.current].path
     }
 
-    /// Get current entry
+    /// Return a reference to the current [`HistoryEntry`] (path + optional state).
     pub fn current_entry(&self) -> &HistoryEntry {
         &self.entries[self.current]
     }
@@ -130,7 +156,7 @@ impl History {
         }
     }
 
-    /// Push with state
+    /// Push a new path with associated [`HistoryState`] data.
     pub fn push_with_state(&mut self, path: String, state: HistoryState) -> NavigationEvent {
         let from = Some(self.current_path().to_string());
 
@@ -151,7 +177,7 @@ impl History {
         }
     }
 
-    /// Replace current entry
+    /// Replace the current entry without modifying the stack length.
     pub fn replace(&mut self, path: String) -> NavigationEvent {
         let from = Some(self.current_path().to_string());
 
@@ -164,7 +190,7 @@ impl History {
         }
     }
 
-    /// Replace current entry with state
+    /// Replace the current entry with a new path and [`HistoryState`].
     pub fn replace_with_state(&mut self, path: String, state: HistoryState) -> NavigationEvent {
         let from = Some(self.current_path().to_string());
 
@@ -177,7 +203,7 @@ impl History {
         }
     }
 
-    /// Go back in history
+    /// Move the cursor one step back. Returns `None` if already at the oldest entry.
     pub fn back(&mut self) -> Option<NavigationEvent> {
         if self.can_go_back() {
             let from = Some(self.current_path().to_string());
@@ -194,7 +220,7 @@ impl History {
         }
     }
 
-    /// Go forward in history
+    /// Move the cursor one step forward. Returns `None` if already at the newest entry.
     pub fn forward(&mut self) -> Option<NavigationEvent> {
         if self.can_go_forward() {
             let from = Some(self.current_path().to_string());
@@ -211,24 +237,24 @@ impl History {
         }
     }
 
-    /// Check if can go back
+    /// Return `true` if [`back`](Self::back) would succeed.
     pub fn can_go_back(&self) -> bool {
         self.current > 0
     }
 
-    /// Check if can go forward
+    /// Return `true` if [`forward`](Self::forward) would succeed.
     pub fn can_go_forward(&self) -> bool {
         self.current < self.entries.len() - 1
     }
 
-    /// Clear all history
+    /// Clear all history and reset to a single entry at `initial_path`.
     pub fn clear(&mut self, initial_path: String) {
         self.entries.clear();
         self.entries.push(HistoryEntry::new(initial_path));
         self.current = 0;
     }
 
-    /// Get history length
+    /// Return the total number of entries in the stack.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -238,17 +264,19 @@ impl History {
         self.entries.is_empty()
     }
 
-    /// Get all entries (for serialization)
+    /// Return a slice of all entries (useful for serialization / persistence).
     pub fn entries(&self) -> &[HistoryEntry] {
         &self.entries
     }
 
-    /// Get current index
+    /// Return the current cursor position in the stack.
     pub fn current_index(&self) -> usize {
         self.current
     }
 
-    /// Restore from entries (for deserialization)
+    /// Restore history from a previously saved set of entries and cursor position.
+    ///
+    /// No-op if `entries` is empty or `current >= entries.len()`.
     pub fn restore(&mut self, entries: Vec<HistoryEntry>, current: usize) {
         if !entries.is_empty() && current < entries.len() {
             self.entries = entries;

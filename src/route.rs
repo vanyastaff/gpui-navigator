@@ -1,4 +1,53 @@
-//! Route definition and configuration
+//! Route definition and configuration.
+//!
+//! This module is the core of the routing system. It provides:
+//!
+//! - [`Route`] — a route with a path pattern, builder function, children, guards,
+//!   middleware, lifecycle hooks, and transitions.
+//! - [`RouteConfig`] — lightweight configuration (path, name, metadata) without
+//!   a builder or feature-gated fields.
+//! - [`NamedRouteRegistry`] — a registry that maps human-readable names to path
+//!   patterns for reverse URL generation.
+//! - [`PageRoute`], [`NamedRoute`], and the [`IntoRoute`] trait — flexible
+//!   navigation descriptors accepted by `Navigator::push`.
+//!
+//! # Route creation
+//!
+//! Routes are created via constructor methods on [`Route`]:
+//!
+//! | Constructor | Use case |
+//! |-------------|----------|
+//! | [`Route::new`] | Full control — receives `Window`, `App`, `RouteParams` |
+//! | [`Route::view`] | Stateless page — simple closure returning `AnyElement` |
+//! | [`Route::component`] | Stateful page — `Entity<T>` cached across navigations |
+//! | [`Route::component_with_params`] | Stateful page keyed by parameters |
+//!
+//! # Builder pattern
+//!
+//! After construction, routes are configured using a fluent builder API:
+//!
+//! ```no_run
+//! use gpui_navigator::{Route, render_router_outlet};
+//! use gpui::*;
+//!
+//! let route = Route::new("/dashboard", |window, cx, params| {
+//!         div()
+//!             .child("Dashboard")
+//!             .child(render_router_outlet(window, cx, None))
+//!             .into_any_element()
+//!     })
+//!     .name("dashboard")
+//!     .meta("title", "Dashboard")
+//!     .children(vec![
+//!         Route::new("", |_, _cx, _p| div().child("Overview").into_any_element()).into(),
+//!         Route::new("settings", |_, _cx, _p| div().child("Settings").into_any_element()).into(),
+//!     ]);
+//! ```
+//!
+//! # Sharing routes
+//!
+//! [`Route`] contains non-cloneable fields (guards, middleware, lifecycle hooks).
+//! Use [`RouteRef`] (`Arc<Route>`) to share routes cheaply across the route tree.
 
 #[cfg(feature = "guard")]
 use crate::guards::RouteGuard;
@@ -17,7 +66,25 @@ use std::sync::Arc;
 // NamedRouteRegistry
 // ============================================================================
 
-/// Registry for named routes
+/// Registry that maps human-readable route names to path patterns.
+///
+/// Enables reverse URL generation: given a name and parameters, produce the
+/// concrete path. This decouples link targets from literal paths, so renaming
+/// a path only requires updating the route definition.
+///
+/// # Example
+///
+/// ```
+/// use gpui_navigator::{NamedRouteRegistry, RouteParams};
+///
+/// let mut registry = NamedRouteRegistry::new();
+/// registry.register("user.profile", "/users/:id/profile");
+///
+/// let mut params = RouteParams::new();
+/// params.set("id".to_string(), "42".to_string());
+///
+/// assert_eq!(registry.url_for("user.profile", &params), Some("/users/42/profile".to_string()));
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct NamedRouteRegistry {
     /// Map of route names to path patterns
@@ -167,7 +234,11 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
 // RouteConfig
 // ============================================================================
 
-/// Route configuration
+/// Lightweight route configuration without a builder or feature-gated fields.
+///
+/// Carries the path pattern, optional name, child configs, and metadata.
+/// Used internally by [`Route`] and also available standalone for scenarios
+/// where you need route metadata without a render function.
 #[derive(Debug, Clone)]
 pub struct RouteConfig {
     /// Route path pattern (e.g., "/users/:id")
@@ -266,7 +337,14 @@ pub type RouteBuilder =
 /// routes around is via `Arc<Route>`.
 pub type RouteRef = Arc<Route>;
 
-/// Route definition with render function
+/// A single route in the navigation tree.
+///
+/// Combines a path pattern, an optional builder function, child routes, and
+/// feature-gated behavior (guards, middleware, lifecycle hooks, transitions).
+///
+/// Create routes with [`Route::new`], [`Route::view`], [`Route::component`],
+/// or [`Route::component_with_params`], then configure them with the fluent
+/// builder methods.
 pub struct Route {
     /// Route configuration
     pub config: RouteConfig,

@@ -1,8 +1,25 @@
-//! Route lifecycle hooks and navigation action types
+//! Route lifecycle hooks and navigation action types.
 //!
-//! This module defines [`NavigationAction`] --- the unified result type for guards,
-//! lifecycle hooks, and middleware decisions --- and the [`RouteLifecycle`] trait
-//! for running code when entering or exiting routes.
+//! This module defines two key abstractions:
+//!
+//! - [`NavigationAction`] — the unified result type returned by guards, lifecycle
+//!   hooks, and middleware. It describes whether navigation should continue, be
+//!   denied, or be redirected.
+//! - [`RouteLifecycle`] — a trait for running code at key points in the navigation
+//!   process: entering a route, exiting a route, and checking whether the user
+//!   can leave (e.g. unsaved changes prompt).
+//!
+//! # Navigation pipeline
+//!
+//! When a navigation request is made, the router executes steps in this order:
+//!
+//! 1. **Guards** — decide if navigation is allowed (see [`guards`](crate::guards))
+//! 2. **`can_deactivate`** — current route's lifecycle check
+//! 3. **Middleware `before`** — cross-cutting pre-navigation logic
+//! 4. **`on_exit`** — current route's cleanup
+//! 5. **Navigation** — the route change itself
+//! 6. **`on_enter`** — new route's setup
+//! 7. **Middleware `after`** — cross-cutting post-navigation logic
 
 use crate::NavigationRequest;
 use gpui::App;
@@ -48,19 +65,19 @@ pub enum NavigationAction {
 }
 
 impl NavigationAction {
-    /// Create a continue/allow result.
+    /// Create a result that allows navigation to proceed (alias for [`Continue`](Self::Continue)).
     pub fn allow() -> Self {
         Self::Continue
     }
 
-    /// Create a deny result with a reason.
+    /// Create a result that blocks navigation with a human-readable reason.
     pub fn deny(reason: impl Into<String>) -> Self {
         Self::Deny {
             reason: reason.into(),
         }
     }
 
-    /// Create a redirect result.
+    /// Create a result that redirects navigation to a different path.
     pub fn redirect(to: impl Into<String>) -> Self {
         Self::Redirect {
             to: to.into(),
@@ -68,7 +85,7 @@ impl NavigationAction {
         }
     }
 
-    /// Create a redirect result with a reason.
+    /// Create a redirect result with a human-readable reason.
     pub fn redirect_with_reason(to: impl Into<String>, reason: impl Into<String>) -> Self {
         Self::Redirect {
             to: to.into(),

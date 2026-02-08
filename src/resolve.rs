@@ -189,39 +189,39 @@ pub struct MatchStack {
 }
 
 impl MatchStack {
-    /// Create an empty match stack
+    /// Create an empty match stack.
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
         }
     }
 
-    /// Get entry at a specific depth
+    /// Return the entry at `depth`, or `None` if out of range.
     pub fn at_depth(&self, depth: usize) -> Option<&MatchEntry> {
         self.entries.get(depth)
     }
 
-    /// Get the root (depth 0) entry
+    /// Return the root (depth 0) entry, or `None` if the stack is empty.
     pub fn root(&self) -> Option<&MatchEntry> {
         self.entries.first()
     }
 
-    /// Get the leaf (deepest) entry
+    /// Return the leaf (deepest) entry, or `None` if the stack is empty.
     pub fn leaf(&self) -> Option<&MatchEntry> {
         self.entries.last()
     }
 
-    /// Total number of matched levels
+    /// Return the total number of matched levels in the stack.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Check if empty (no routes matched)
+    /// Return `true` if no routes matched the path.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Maximum depth (0-indexed). Returns None if empty.
+    /// Return the maximum depth (0-indexed), or `None` if the stack is empty.
     pub fn max_depth(&self) -> Option<usize> {
         if self.entries.is_empty() {
             None
@@ -230,22 +230,22 @@ impl MatchStack {
         }
     }
 
-    /// Get all entries as a slice
+    /// Return all entries as a slice (ordered root → leaf).
     pub fn entries(&self) -> &[MatchEntry] {
         &self.entries
     }
 
-    /// Get the accumulated params at the deepest level
+    /// Return the accumulated params at the deepest matched level.
     pub fn params(&self) -> RouteParams {
         self.leaf().map(|e| e.params.clone()).unwrap_or_default()
     }
 
-    /// Check if a specific depth has a valid entry
+    /// Return `true` if the stack contains an entry at the given `depth`.
     pub fn has_depth(&self, depth: usize) -> bool {
         depth < self.entries.len()
     }
 
-    /// Pretty-print for debugging
+    /// Return a multi-line human-readable representation (debug builds only).
     #[cfg(debug_assertions)]
     pub fn debug_string(&self) -> String {
         if self.entries.is_empty() {

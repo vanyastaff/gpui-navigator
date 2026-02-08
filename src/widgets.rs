@@ -1,13 +1,29 @@
-//! Router widgets for rendering routes
+//! Router widgets for rendering routes.
 //!
-//! Provides `RouterOutlet`, `RouterView`, `RouterLink` and helper functions
-//! for rendering matched routes using the MatchStack architecture.
+//! This module provides the GPUI components that turn a matched route tree
+//! into rendered UI:
 //!
-//! ## Architecture (MatchStack)
+//! - [`RouterView`] / [`router_view`] — renders the **root** matched route
+//!   (depth 0). Place this once in your top-level layout.
+//! - [`RouterOutlet`] / [`router_outlet`] — renders the **child** route at
+//!   the next nesting depth. Nest these inside route builders to compose
+//!   parent-child layouts.
+//! - [`RouterLink`] / [`router_link`] — clickable navigation link with
+//!   optional active-state styling.
+//! - [`DefaultPages`] — configurable fallback pages (404, loading, error).
 //!
-//! Instead of each outlet independently searching the route tree at render time,
-//! `GlobalRouter` resolves a `MatchStack` once per navigation. Each outlet
-//! reads its entry by depth index — O(1) per outlet.
+//! # Architecture (MatchStack)
+//!
+//! Instead of each outlet independently searching the route tree at render
+//! time, [`GlobalRouter`] resolves a
+//! [`MatchStack`](crate::resolve::MatchStack) **once per navigation**. Each
+//! outlet reads its entry by depth index — **O(1) per outlet**.
+//!
+//! ```text
+//! Navigation → resolve_match_stack() → [depth 0, depth 1, depth 2, …]
+//!                                         ↑          ↑          ↑
+//!                                     RouterView  Outlet#1   Outlet#2
+//! ```
 
 use crate::context::GlobalRouter;
 use crate::resolve::{
@@ -444,7 +460,11 @@ pub fn render_router_outlet(window: &mut Window, cx: &mut App, name: Option<&str
 // RouterView — top-level route renderer
 // ============================================================================
 
-/// RouterView component that renders the current matched route
+/// Component that renders the root-level matched route (depth 0).
+///
+/// Use this as the top-level entry point in your window's `Render` impl.
+/// Child routes are rendered by [`RouterOutlet`] instances nested inside
+/// route builders.
 pub struct RouterView;
 
 impl Default for RouterView {
@@ -517,7 +537,18 @@ pub fn router_view<V>(window: &mut Window, cx: &mut Context<'_, V>) -> AnyElemen
 
 use crate::Navigator;
 
-/// A clickable link component for router navigation
+/// A clickable link component that navigates to a route on click.
+///
+/// Supports optional active-state styling via [`active_class`](Self::active_class).
+///
+/// # Examples
+///
+/// ```ignore
+/// RouterLink::new("/settings")
+///     .child("Settings")
+///     .active_class(|div| div.text_color(gpui::rgb(0x2196f3)))
+///     .build(cx)
+/// ```
 pub struct RouterLink {
     /// Target route path
     path: SharedString,
@@ -577,7 +608,9 @@ impl RouterLink {
     }
 }
 
-/// Helper function to create a simple text link
+/// Create a simple text link with built-in active-state color.
+///
+/// For more control (custom children, styling), use [`RouterLink`] directly.
 pub fn router_link<V: 'static>(
     cx: &mut Context<'_, V>,
     path: impl Into<SharedString>,
@@ -610,7 +643,17 @@ pub fn router_link<V: 'static>(
 // Default Pages System
 // ============================================================================
 
-/// Configuration for default router pages (404, loading, error, etc.)
+/// Configurable fallback pages for 404, loading, and error states.
+///
+/// Register custom renderers or fall back to the built-in minimalist pages.
+///
+/// # Examples
+///
+/// ```ignore
+/// DefaultPages::new()
+///     .with_not_found(|| gpui::div().child("Custom 404").into_any_element())
+///     .with_error(|msg| gpui::div().child(msg.to_string()).into_any_element())
+/// ```
 pub struct DefaultPages {
     /// Custom 404 not found page builder
     pub not_found: Option<Box<dyn Fn() -> AnyElement + Send + Sync>>,

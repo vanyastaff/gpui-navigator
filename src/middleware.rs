@@ -4,7 +4,20 @@
 //! decide *if* navigation happens), middleware handles side effects like
 //! logging, metrics, context setup, and cleanup.
 //!
-//! All methods are **synchronous** --- GPUI is a single-threaded desktop framework.
+//! All methods are **synchronous** — GPUI is a single-threaded desktop framework.
+//!
+//! # Execution order
+//!
+//! When multiple middleware are attached, they execute in **priority order**
+//! (higher [`priority`](RouteMiddleware::priority) first) for `before_navigation`,
+//! and in reverse order for `after_navigation` (onion model).
+//!
+//! # Creating middleware
+//!
+//! | Approach | When to use |
+//! |----------|-------------|
+//! | Implement [`RouteMiddleware`] | Full control, named, with custom priority |
+//! | [`middleware_fn`] | Quick one-off from two closures |
 //!
 //! # Example
 //!
@@ -105,7 +118,7 @@ where
     FnMiddleware { before, after }
 }
 
-/// Middleware created from two functions.
+/// Middleware created from two closures via [`middleware_fn`].
 pub struct FnMiddleware<B, A> {
     before: B,
     after: A,

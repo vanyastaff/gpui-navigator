@@ -100,8 +100,14 @@
 //!
 //! # Feature Flags
 //!
-//! - `log` (default) - Uses the standard `log` crate for logging
-//! - `tracing` - Uses the `tracing` crate for structured logging (mutually exclusive with `log`)
+//! | Feature      | Default | Description |
+//! |--------------|---------|-------------|
+//! | `guard`      | yes     | Route guards (`AuthGuard`, `RoleGuard`, `PermissionGuard`) |
+//! | `middleware`  | yes     | Before/after navigation hooks |
+//! | `transition` | yes     | Fade, slide animations on route change |
+//! | `cache`      | yes     | LRU cache for route resolution (depends on `lru`) |
+//! | `log`        | yes     | Logging via the `log` crate |
+//! | `tracing`    | no      | Logging via `tracing` (mutually exclusive with `log`) |
 
 #![doc(html_root_url = "https://docs.rs/gpui_navigator/0.1.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]

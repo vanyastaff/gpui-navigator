@@ -1,8 +1,31 @@
 //! Router context integration for GPUI.
 //!
-//! This module provides the global router state management through GPUI's context system.
-//! It exposes the [`Navigator`] API for navigation operations and manages the full
-//! navigation pipeline including guards, middleware, and lifecycle hooks.
+//! This module provides the global router state management through GPUI's
+//! context system. It contains three key types:
+//!
+//! - [`GlobalRouter`] — the central routing object stored as a GPUI `Global`.
+//!   It owns the [`RouterState`](crate::RouterState), the route registry,
+//!   and orchestrates the full navigation pipeline (guards → middleware →
+//!   navigation → middleware).
+//!
+//! - [`Navigator`] — a convenience API with static methods
+//!   (`Navigator::push`, `Navigator::pop`, …) that read/write the
+//!   `GlobalRouter` through `cx`.
+//!
+//! - [`NavigatorHandle`] — returned by [`Navigator::of(cx)`](Navigator::of),
+//!   enables fluent chained navigation calls.
+//!
+//! # Initialization
+//!
+//! Use [`init_router`] to set up the global router before any navigation:
+//!
+//! ```ignore
+//! use gpui_navigator::{init_router, Route};
+//!
+//! init_router(cx, |router| {
+//!     router.add_route(Route::new("/", |_, _cx, _params| gpui::div()));
+//! });
+//! ```
 
 #[cfg(feature = "cache")]
 use crate::cache::{CacheStats, RouteCache};
@@ -117,7 +140,7 @@ pub struct GlobalRouter {
 }
 
 impl GlobalRouter {
-    /// Create a new global router.
+    /// Create a new global router with empty state and no registered routes.
     pub fn new() -> Self {
         Self {
             state: RouterState::new(),
@@ -152,7 +175,11 @@ impl GlobalRouter {
         self.match_stack = resolve_match_stack(self.state.routes(), self.state.current_path());
     }
 
-    /// Register a route.
+    /// Register a route and re-resolve the match stack.
+    ///
+    /// If the route has a [`name`](crate::route::RouteConfig::name), it is
+    /// also registered in the [`NamedRouteRegistry`] for URL generation via
+    /// [`url_for`](Self::url_for).
     pub fn add_route(&mut self, route: Route) {
         if let Some(name) = &route.config.name {
             self.named_routes
@@ -446,7 +473,9 @@ impl GlobalRouter {
     // Named routes
     // ========================================================================
 
-    /// Navigate to a named route with parameters.
+    /// Navigate to a named route, resolving the URL from `params`.
+    ///
+    /// Returns `None` if the name is not registered.
     pub fn push_named(
         &mut self,
         name: &str,
@@ -457,7 +486,9 @@ impl GlobalRouter {
         Some(self.push(url, cx))
     }
 
-    /// Generate URL for a named route.
+    /// Generate a URL for a named route by substituting `params` into its pattern.
+    ///
+    /// Returns `None` if the name is not registered.
     pub fn url_for(&self, name: &str, params: &RouteParams) -> Option<String> {
         self.named_routes.url_for(name, params)
     }
@@ -466,7 +497,7 @@ impl GlobalRouter {
     // Accessors
     // ========================================================================
 
-    /// Get current path.
+    /// Return the current navigation path.
     pub fn current_path(&self) -> &str {
         self.state.current_path()
     }
@@ -691,7 +722,10 @@ where
     cx.set_global(router);
 }
 
-/// Navigate to a path using global router.
+/// Navigate to a path using the global router and refresh all windows.
+///
+/// This is a convenience shortcut equivalent to
+/// `cx.update_global::<GlobalRouter, _>(|r, cx| r.push(path, cx))`.
 pub fn navigate(cx: &mut App, path: impl Into<String>) {
     let path = path.into();
     cx.update_global::<GlobalRouter, _>(|router, cx| {
@@ -700,7 +734,7 @@ pub fn navigate(cx: &mut App, path: impl Into<String>) {
     cx.refresh_windows();
 }
 
-/// Get current path from global router.
+/// Return the current path from the global router.
 pub fn current_path(cx: &App) -> String {
     cx.router().current_path().to_string()
 }
@@ -709,9 +743,15 @@ pub fn current_path(cx: &App) -> String {
 // NavigatorHandle
 // ============================================================================
 
-/// Handle for `Navigator::of(cx)` pattern.
+/// Handle returned by [`Navigator::of`] for fluent chained navigation.
 ///
-/// Provides instance methods for chained navigation calls.
+/// Each method consumes and returns `self`, allowing patterns like:
+///
+/// ```ignore
+/// Navigator::of(cx)
+///     .push("/users")
+///     .push("/users/42");
+/// ```
 pub struct NavigatorHandle<'a, C: BorrowAppContext> {
     cx: &'a mut C,
 }

@@ -21,6 +21,13 @@
 //! | [`Guards`] | AND — all guards must allow |
 //! | [`NotGuard`] | Invert — allow becomes deny, deny becomes allow |
 //!
+//! # Execution order
+//!
+//! Guards run in **priority order** (higher value first). The built-in guards
+//! use: `AuthGuard` = 100, `RoleGuard` = 90, `PermissionGuard` = 80.
+//! The first non-[`Continue`](crate::NavigationAction::Continue) result
+//! short-circuits evaluation.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -141,7 +148,9 @@ where
 // AuthGuard
 // ============================================================================
 
-/// Type alias for authentication check function.
+/// Function type for authentication checks.
+///
+/// Receives the app context and returns `true` if the user is authenticated.
 pub type AuthCheckFn = Box<dyn Fn(&App) -> bool + Send + Sync>;
 
 /// Authentication guard that checks if user is logged in.
@@ -209,7 +218,9 @@ impl RouteGuard for AuthGuard {
 // RoleGuard
 // ============================================================================
 
-/// Type alias for role extraction function.
+/// Function type for extracting the current user's role.
+///
+/// Returns `None` if the user has no role or is not authenticated.
 pub type RoleExtractorFn = Box<dyn Fn(&App) -> Option<String> + Send + Sync>;
 
 /// Role-based authorization guard.
@@ -284,7 +295,10 @@ impl RouteGuard for RoleGuard {
 // PermissionGuard
 // ============================================================================
 
-/// Type alias for permission check function.
+/// Function type for checking a specific permission.
+///
+/// Receives the app context and the permission string to check.
+/// Returns `true` if the user holds the requested permission.
 pub type PermissionCheckFn = Box<dyn Fn(&App, &str) -> bool + Send + Sync>;
 
 /// Permission-based authorization guard.

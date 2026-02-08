@@ -1,7 +1,30 @@
-//! Route resolution caching
+//! Route resolution caching.
 //!
-//! This module provides caching functionality to avoid repeated route lookups
-//! during rendering with LRU eviction policy.
+//! This module provides [`RouteCache`] — an LRU-based cache that avoids
+//! repeated route tree lookups during rendering. It is gated behind the
+//! `cache` feature flag and uses the [`lru`] crate internally.
+//!
+//! Two independent LRU caches are maintained:
+//!
+//! - **Parent cache** — maps a full request path to the [`RouteId`] of the
+//!   parent route that owns it (e.g. `"/dashboard/analytics"` → `"/dashboard"`).
+//! - **Child cache** — maps an `(path, outlet_name)` pair to resolved
+//!   [`RouteParams`].
+//!
+//! [`CacheStats`] tracks hits, misses, and invalidations so you can monitor
+//! cache effectiveness at runtime.
+//!
+//! # Examples
+//!
+//! ```
+//! use gpui_navigator::cache::{RouteCache, RouteId};
+//!
+//! let mut cache = RouteCache::new();
+//! cache.set_parent("/dashboard/analytics".to_string(), RouteId::from_path("/dashboard"));
+//!
+//! assert_eq!(cache.get_parent("/dashboard/analytics").unwrap().path, "/dashboard");
+//! assert_eq!(cache.stats().parent_hits, 1);
+//! ```
 
 use crate::route::Route;
 use crate::{trace_log, RouteParams};
@@ -45,17 +68,29 @@ struct ParentRouteCacheEntry {
     parent_route_id: RouteId,
 }
 
-/// Cache performance statistics
+/// Counters tracking cache hit/miss rates and invalidations.
+///
+/// Use [`parent_hit_rate`](Self::parent_hit_rate),
+/// [`child_hit_rate`](Self::child_hit_rate), or
+/// [`overall_hit_rate`](Self::overall_hit_rate) for quick ratio access.
 #[derive(Debug, Clone, Default)]
 pub struct CacheStats {
+    /// Number of parent-cache hits.
     pub parent_hits: usize,
+    /// Number of parent-cache misses.
     pub parent_misses: usize,
+    /// Number of child-cache hits.
     pub child_hits: usize,
+    /// Number of child-cache misses.
     pub child_misses: usize,
+    /// Number of full cache invalidations (via [`RouteCache::clear`]).
     pub invalidations: usize,
 }
 
 impl CacheStats {
+    /// Return the parent-cache hit rate as a value in `0.0..=1.0`.
+    ///
+    /// Returns `0.0` if no parent lookups have been performed.
     pub fn parent_hit_rate(&self) -> f64 {
         let total = self.parent_hits + self.parent_misses;
         if total == 0 {
@@ -65,6 +100,7 @@ impl CacheStats {
         }
     }
 
+    /// Return the child-cache hit rate as a value in `0.0..=1.0`.
     pub fn child_hit_rate(&self) -> f64 {
         let total = self.child_hits + self.child_misses;
         if total == 0 {
@@ -74,6 +110,7 @@ impl CacheStats {
         }
     }
 
+    /// Return the combined (parent + child) hit rate as a value in `0.0..=1.0`.
     pub fn overall_hit_rate(&self) -> f64 {
         let total_hits = self.parent_hits + self.child_hits;
         let total_misses = self.parent_misses + self.child_misses;
@@ -86,9 +123,13 @@ impl CacheStats {
     }
 }
 
-/// Route resolution cache with LRU eviction
+/// LRU cache for route resolution results.
 ///
-/// Default capacity: 1000 entries per cache.
+/// Maintains separate parent and child caches, each with independent LRU
+/// eviction. Default capacity is 1000 entries per cache.
+///
+/// The cache is automatically cleared on route registration and navigation
+/// to ensure consistency.
 #[derive(Debug)]
 pub struct RouteCache {
     parent_cache: LruCache<String, ParentRouteCacheEntry>,
@@ -99,10 +140,16 @@ pub struct RouteCache {
 impl RouteCache {
     const DEFAULT_CAPACITY: usize = 1000;
 
+    /// Create a cache with the default capacity (1000 entries per sub-cache).
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CAPACITY)
     }
 
+    /// Create a cache with a custom per-sub-cache capacity.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is zero.
     pub fn with_capacity(capacity: usize) -> Self {
         let cap = NonZeroUsize::new(capacity).expect("Cache capacity must be non-zero");
         Self {
@@ -112,6 +159,7 @@ impl RouteCache {
         }
     }
 
+    /// Clear both sub-caches and increment the invalidation counter.
     pub fn clear(&mut self) {
         trace_log!("Clearing route cache");
         self.parent_cache.clear();
@@ -119,6 +167,9 @@ impl RouteCache {
         self.stats.invalidations += 1;
     }
 
+    /// Look up the cached parent [`RouteId`] for the given `path`.
+    ///
+    /// Returns `None` on a cache miss. Updates hit/miss stats.
     pub fn get_parent(&mut self, path: &str) -> Option<RouteId> {
         if let Some(entry) = self.parent_cache.get(path) {
             self.stats.parent_hits += 1;
@@ -131,6 +182,7 @@ impl RouteCache {
         }
     }
 
+    /// Insert a parent route mapping into the cache.
     pub fn set_parent(&mut self, path: String, parent_route_id: RouteId) {
         trace_log!(
             "Caching parent route '{}' for path '{}'",
@@ -141,22 +193,27 @@ impl RouteCache {
             .push(path, ParentRouteCacheEntry { parent_route_id });
     }
 
+    /// Return a reference to the current cache statistics.
     pub fn stats(&self) -> &CacheStats {
         &self.stats
     }
 
+    /// Reset all counters in [`CacheStats`] to zero.
     pub fn reset_stats(&mut self) {
         self.stats = CacheStats::default();
     }
 
+    /// Return the number of entries currently in the parent cache.
     pub fn parent_cache_size(&self) -> usize {
         self.parent_cache.len()
     }
 
+    /// Return the number of entries currently in the child cache.
     pub fn child_cache_size(&self) -> usize {
         self.child_cache.len()
     }
 
+    /// Return the total number of entries across both sub-caches.
     pub fn total_size(&self) -> usize {
         self.parent_cache_size() + self.child_cache_size()
     }

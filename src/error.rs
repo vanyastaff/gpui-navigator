@@ -1,6 +1,29 @@
-//! Error handling for router
+//! Error handling for the router.
 //!
-//! Provides error types and handlers for navigation failures, 404s, and other routing errors.
+//! This module defines the types returned when a navigation attempt cannot
+//! complete successfully:
+//!
+//! - [`NavigationResult`] — the top-level outcome of any navigation
+//!   (`Success`, `NotFound`, `Blocked`, `Error`).
+//! - [`NavigationError`] — a detailed error variant (route not found, guard
+//!   blocked, invalid params, etc.).
+//! - [`ErrorHandlers`] — a builder for registering custom 404 and error page
+//!   renderers.
+//!
+//! # Examples
+//!
+//! ```
+//! use gpui_navigator::error::NavigationResult;
+//!
+//! let result = NavigationResult::Success { path: "/home".into() };
+//! assert!(result.is_success());
+//!
+//! let blocked = NavigationResult::Blocked {
+//!     reason: "Not authenticated".into(),
+//!     redirect: Some("/login".into()),
+//! };
+//! assert_eq!(blocked.redirect_path(), Some("/login"));
+//! ```
 
 use gpui::{AnyElement, App};
 use std::fmt;
@@ -10,7 +33,10 @@ use std::sync::Arc;
 // Navigation Result Types
 // ============================================================================
 
-/// Result of a navigation attempt
+/// Outcome of a navigation attempt through the guard/middleware pipeline.
+///
+/// Every call to [`GlobalRouter::push`](crate::context::GlobalRouter::push)
+/// (and friends) returns this enum.
 #[derive(Debug, Clone)]
 pub enum NavigationResult {
     /// Navigation succeeded
@@ -26,7 +52,10 @@ pub enum NavigationResult {
     Error(NavigationError),
 }
 
-/// Errors that can occur during navigation
+/// Detailed error variants that can occur during navigation.
+///
+/// Implements [`std::error::Error`] and [`Display`](std::fmt::Display) for
+/// idiomatic error handling.
 #[derive(Debug, Clone)]
 pub enum NavigationError {
     /// Route not found
@@ -112,7 +141,21 @@ pub type ErrorHandler = Arc<dyn Fn(&mut App, &NavigationError) -> AnyElement + S
 /// Handler for 404 not found
 pub type NotFoundHandler = Arc<dyn Fn(&mut App, &str) -> AnyElement + Send + Sync>;
 
-/// Collection of error handlers for the router
+/// Builder for registering custom error-page renderers.
+///
+/// # Examples
+///
+/// ```ignore
+/// use gpui_navigator::error::ErrorHandlers;
+///
+/// let handlers = ErrorHandlers::new()
+///     .on_not_found(|cx, path| {
+///         gpui::div().child(format!("404: {path}")).into_any_element()
+///     })
+///     .on_error(|cx, err| {
+///         gpui::div().child(format!("Error: {err}")).into_any_element()
+///     });
+/// ```
 pub struct ErrorHandlers {
     /// Handler for 404 not found errors
     pub not_found: Option<NotFoundHandler>,

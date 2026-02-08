@@ -1,7 +1,30 @@
-//! Route parameter extraction and query string parsing
+//! Route parameter extraction and query string parsing.
 //!
-//! This module provides types for working with URL parameters extracted from route
-//! patterns (like `:id`) and query strings (like `?page=1&sort=name`).
+//! This module provides two complementary types for working with URL data:
+//!
+//! - [`RouteParams`] — path parameters extracted from dynamic segments (e.g.
+//!   `:id` in `/users/:id`). Supports typed access via [`get_as`](RouteParams::get_as),
+//!   parent-child merging via [`merge`](RouteParams::merge), and extraction from
+//!   raw paths via [`from_path`](RouteParams::from_path).
+//! - [`QueryParams`] — query string parameters parsed from the `?key=value&...`
+//!   portion of a URL. Supports multi-valued keys (e.g. `?tag=a&tag=b`), typed
+//!   access, and round-trip serialization.
+//!
+//! # Example
+//!
+//! ```
+//! use gpui_navigator::{RouteParams, QueryParams};
+//!
+//! // Path parameters from /users/42
+//! let mut params = RouteParams::new();
+//! params.set("id".to_string(), "42".to_string());
+//! assert_eq!(params.get_as::<u32>("id"), Some(42));
+//!
+//! // Query parameters from ?page=1&sort=name
+//! let query = QueryParams::from_query_string("page=1&sort=name");
+//! assert_eq!(query.get_as::<u32>("page"), Some(1));
+//! assert_eq!(query.get("sort"), Some(&"name".to_string()));
+//! ```
 
 use std::collections::HashMap;
 
@@ -26,17 +49,17 @@ pub struct RouteParams {
 }
 
 impl RouteParams {
-    /// Create new empty route params
+    /// Create empty route parameters.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create from hashmap
+    /// Create from an existing `HashMap`.
     pub fn from_map(params: HashMap<String, String>) -> Self {
         Self { params }
     }
 
-    /// Get a parameter value as a string
+    /// Get a parameter value by key.
     pub fn get(&self, key: &str) -> Option<&String> {
         self.params.get(key)
     }
@@ -51,42 +74,42 @@ impl RouteParams {
         self.params.get(key)?.parse().ok()
     }
 
-    /// Insert a parameter
+    /// Insert or overwrite a parameter.
     pub fn insert(&mut self, key: String, value: String) {
         self.params.insert(key, value);
     }
 
-    /// Set a parameter (alias for insert)
+    /// Set a parameter (alias for [`insert`](Self::insert)).
     pub fn set(&mut self, key: String, value: String) {
         self.params.insert(key, value);
     }
 
-    /// Check if parameter exists
+    /// Return `true` if the given key is present.
     pub fn contains(&self, key: &str) -> bool {
         self.params.contains_key(key)
     }
 
-    /// Get all parameters as a reference to the HashMap
+    /// Get a reference to the underlying parameter map.
     pub fn all(&self) -> &HashMap<String, String> {
         &self.params
     }
 
-    /// Get mutable reference to parameters HashMap
+    /// Get a mutable reference to the underlying parameter map.
     pub fn all_mut(&mut self) -> &mut HashMap<String, String> {
         &mut self.params
     }
 
-    /// Iterate over all parameters
+    /// Iterate over all `(key, value)` pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
         self.params.iter()
     }
 
-    /// Check if parameters are empty
+    /// Return `true` if there are no parameters.
     pub fn is_empty(&self) -> bool {
         self.params.is_empty()
     }
 
-    /// Get number of parameters
+    /// Return the number of parameters.
     pub fn len(&self) -> usize {
         self.params.len()
     }
@@ -295,7 +318,7 @@ pub struct QueryParams {
 }
 
 impl QueryParams {
-    /// Create new empty query params
+    /// Create empty query parameters.
     pub fn new() -> Self {
         Self::default()
     }
@@ -326,21 +349,21 @@ impl QueryParams {
         Self { params }
     }
 
-    /// Get first value for a parameter
+    /// Get the first value for a key.
     pub fn get(&self, key: &str) -> Option<&String> {
         self.params.get(key)?.first()
     }
 
-    /// Get all values for a parameter
+    /// Get all values for a key.
     ///
-    /// Useful for parameters that can appear multiple times like `?tag=rust&tag=gpui`
+    /// Useful for parameters that can appear multiple times (e.g. `?tag=rust&tag=gpui`).
     pub fn get_all(&self, key: &str) -> Option<&Vec<String>> {
         self.params.get(key)
     }
 
-    /// Get parameter as a specific type
+    /// Get the first value for a key, parsed as type `T`.
     ///
-    /// Returns the first value parsed as type T.
+    /// Returns `None` if the key is missing or the value cannot be parsed.
     pub fn get_as<T>(&self, key: &str) -> Option<T>
     where
         T: std::str::FromStr,
@@ -348,19 +371,19 @@ impl QueryParams {
         self.get(key)?.parse().ok()
     }
 
-    /// Insert a parameter
+    /// Append a value for the given key.
     ///
-    /// If the key already exists, the value is appended to the list.
+    /// If the key already exists, the new value is added to the list (not replaced).
     pub fn insert(&mut self, key: String, value: String) {
         self.params.entry(key).or_default().push(value);
     }
 
-    /// Check if parameter exists
+    /// Return `true` if the given key is present.
     pub fn contains(&self, key: &str) -> bool {
         self.params.contains_key(key)
     }
 
-    /// Convert to query string
+    /// Serialize back into a query string.
     ///
     /// # Example
     ///
@@ -390,12 +413,12 @@ impl QueryParams {
         pairs.join("&")
     }
 
-    /// Check if parameters are empty
+    /// Return `true` if there are no parameters.
     pub fn is_empty(&self) -> bool {
         self.params.is_empty()
     }
 
-    /// Get number of unique parameter keys
+    /// Return the number of unique parameter keys.
     pub fn len(&self) -> usize {
         self.params.len()
     }

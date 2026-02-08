@@ -1,4 +1,25 @@
-//! Router state management
+//! Router state management.
+//!
+//! This module contains [`RouterState`] — the core data structure that holds
+//! navigation history, registered routes, and current match cache.
+//!
+//! [`RouterState`] is the low-level engine behind navigation. Higher-level APIs
+//! like [`GlobalRouter`](crate::context::GlobalRouter) and
+//! [`Navigator`](crate::Navigator) delegate to it for history bookkeeping.
+//!
+//! # Navigation model
+//!
+//! The state maintains a linear history stack with a cursor (`current`).
+//! [`push`](RouterState::push) truncates any forward entries before appending,
+//! while [`back`](RouterState::back) / [`forward`](RouterState::forward) move
+//! the cursor without modifying the stack.
+//!
+//! # Navigation cancellation (T009)
+//!
+//! An atomic navigation ID counter allows async guard checks to detect that a
+//! newer navigation has started and the current one should be discarded.
+//! Call [`start_navigation`](RouterState::start_navigation) to obtain an ID,
+//! then periodically check [`is_navigation_current`](RouterState::is_navigation_current).
 
 use crate::route::Route;
 use crate::{NavigationDirection, RouteChangeEvent, RouteMatch, RouteParams};
@@ -6,7 +27,26 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Router state
+/// Core navigation state that tracks history, registered routes, and match cache.
+///
+/// This struct owns the navigation history stack and provides methods for
+/// pushing, replacing, and traversing entries. Route matching results are
+/// cached in a [`HashMap`] to avoid repeated tree walks within a single path.
+///
+/// # Examples
+///
+/// ```
+/// use gpui_navigator::RouterState;
+///
+/// let mut state = RouterState::new();
+/// assert_eq!(state.current_path(), "/");
+///
+/// state.push("/users".to_string());
+/// assert_eq!(state.current_path(), "/users");
+///
+/// state.back();
+/// assert_eq!(state.current_path(), "/");
+/// ```
 #[derive(Debug)]
 pub struct RouterState {
     /// Navigation history stack
@@ -25,7 +65,7 @@ pub struct RouterState {
 }
 
 impl RouterState {
-    /// Create a new router state
+    /// Create a new router state with the initial path set to `"/"`.
     pub fn new() -> Self {
         Self {
             history: vec!["/".to_string()],
@@ -37,7 +77,10 @@ impl RouterState {
         }
     }
 
-    /// Get current navigation ID
+    /// Return the current navigation ID.
+    ///
+    /// The value is monotonically increasing and is shared across clones of
+    /// this state (via `Arc<AtomicUsize>`).
     pub fn navigation_id(&self) -> usize {
         self.navigation_id.load(Ordering::SeqCst)
     }
@@ -55,23 +98,26 @@ impl RouterState {
         self.navigation_id() == nav_id
     }
 
-    /// Register a route
+    /// Register a route and invalidate the match cache.
+    ///
+    /// Routes are stored in registration order. The first route whose pattern
+    /// matches the current path wins during [`current_match`](Self::current_match).
     pub fn add_route(&mut self, route: Route) {
         self.routes.push(Arc::new(route));
         self.cache.clear();
     }
 
-    /// Get current path
+    /// Return the current path in the history stack.
     pub fn current_path(&self) -> &str {
         &self.history[self.current]
     }
 
-    /// Get all registered routes
+    /// Return a slice of all registered routes (in registration order).
     pub fn routes(&self) -> &[Arc<Route>] {
         &self.routes
     }
 
-    /// Get current route parameters
+    /// Return the current route parameters (used for parameter inheritance in nested routing).
     pub fn current_params(&self) -> &RouteParams {
         &self.current_params
     }
@@ -81,7 +127,11 @@ impl RouterState {
         self.current_params = params;
     }
 
-    /// Get current route match (with caching)
+    /// Find the [`RouteMatch`] for the current path, caching the result.
+    ///
+    /// On a cache miss the registered routes are iterated in order and the
+    /// first match is stored. Subsequent calls with the same path return
+    /// the cached value in O(1).
     pub fn current_match(&mut self) -> Option<RouteMatch> {
         let path = self.current_path();
 
@@ -152,7 +202,12 @@ impl RouterState {
         None
     }
 
-    /// Navigate to a new path
+    /// Push a new path onto the history stack.
+    ///
+    /// Any forward history (entries after the current cursor) is truncated
+    /// before appending, mirroring browser `pushState` semantics.
+    ///
+    /// Returns a [`RouteChangeEvent`] describing the transition.
     pub fn push(&mut self, path: String) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
 
@@ -170,7 +225,10 @@ impl RouterState {
         }
     }
 
-    /// Replace current path
+    /// Replace the current history entry in-place without adding a new one.
+    ///
+    /// Useful for redirects where the intermediate path should not appear in
+    /// the back-button history.
     pub fn replace(&mut self, path: String) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
 
@@ -183,7 +241,9 @@ impl RouterState {
         }
     }
 
-    /// Go back in history
+    /// Move the cursor one step back in the history stack.
+    ///
+    /// Returns `None` if already at the oldest entry.
     pub fn back(&mut self) -> Option<RouteChangeEvent> {
         if self.current > 0 {
             let from = Some(self.current_path().to_string());
@@ -200,7 +260,9 @@ impl RouterState {
         }
     }
 
-    /// Go forward in history
+    /// Move the cursor one step forward in the history stack.
+    ///
+    /// Returns `None` if already at the newest entry.
     pub fn forward(&mut self) -> Option<RouteChangeEvent> {
         if self.current < self.history.len() - 1 {
             let from = Some(self.current_path().to_string());
@@ -217,12 +279,12 @@ impl RouterState {
         }
     }
 
-    /// Check if can go back
+    /// Return `true` if [`back`](Self::back) would succeed.
     pub fn can_go_back(&self) -> bool {
         self.current > 0
     }
 
-    /// Check if can go forward
+    /// Return `true` if [`forward`](Self::forward) would succeed.
     pub fn can_go_forward(&self) -> bool {
         self.current < self.history.len() - 1
     }
@@ -245,7 +307,7 @@ impl RouterState {
         }
     }
 
-    /// Clear navigation history
+    /// Reset the history stack to a single `"/"` entry, clearing the match cache.
     pub fn clear(&mut self) {
         self.history.clear();
         self.history.push("/".to_string());
@@ -274,13 +336,17 @@ impl Clone for RouterState {
     }
 }
 
-/// Router - manages navigation state
+/// Thin wrapper around [`RouterState`] for standalone usage.
+///
+/// In most applications you will interact with
+/// [`GlobalRouter`](crate::context::GlobalRouter) instead, which adds
+/// guards, middleware, and GPUI integration on top of this struct.
 pub struct Router {
     state: RouterState,
 }
 
 impl Router {
-    /// Create a new router
+    /// Create a new router with default state (initial path `"/"`).
     pub fn new() -> Self {
         Self {
             state: RouterState::new(),

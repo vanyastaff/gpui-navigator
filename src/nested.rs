@@ -98,7 +98,7 @@ pub fn normalize_path(path: &'_ str) -> Cow<'_, str> {
 
 /// Extract parameter name from a route path segment
 ///
-/// Strips leading ':' and any type constraints like ':id<i32>' -> 'id'.
+/// Strips leading ':' and any type constraints like `:id<i32>` -> `id`.
 /// Returns `Cow<str>` to avoid allocation when no constraint exists.
 ///
 /// # Examples

@@ -1,7 +1,33 @@
-//! Route transition animations
+//! Route transition animations.
 //!
-//! This module provides a transition system for route changes,
-//! allowing separate enter and exit animations for incoming and outgoing content.
+//! This module provides a declarative transition system for route changes,
+//! gated behind the `transition` feature flag.
+//!
+//! # Available transitions
+//!
+//! | Variant | Constructor | Description |
+//! |---------|-------------|-------------|
+//! | [`Transition::None`] | default | No animation |
+//! | [`Transition::Fade`] | [`Transition::fade`] | Opacity 0→1 |
+//! | [`Transition::Slide`] | [`Transition::slide_left`], etc. | Positional slide in any direction |
+//!
+//! Each transition carries a `duration_ms` controlling animation length.
+//!
+//! # Per-route configuration
+//!
+//! Attach a transition to a route via the builder:
+//!
+//! ```ignore
+//! use gpui_navigator::{Route, Transition};
+//!
+//! Route::new("/dashboard", |_, cx, _| gpui::div())
+//!     .transition(Transition::fade(200));
+//! ```
+//!
+//! # One-off overrides
+//!
+//! Use [`TransitionConfig::set_override`] or `Navigator::push_with_transition`
+//! to override the default for a single navigation.
 
 use gpui::{div, px, Div, IntoElement, ParentElement, Styled};
 use std::time::Duration;
@@ -19,7 +45,21 @@ pub enum SlideDirection {
     Down,
 }
 
-/// Built-in transition types
+/// Built-in transition types for route animations.
+///
+/// # Examples
+///
+/// ```
+/// use gpui_navigator::transition::Transition;
+/// use std::time::Duration;
+///
+/// let fade = Transition::fade(200);
+/// assert_eq!(fade.duration(), Duration::from_millis(200));
+/// assert!(!fade.is_none());
+///
+/// let slide = Transition::slide_left(300);
+/// assert_eq!(slide.duration(), Duration::from_millis(300));
+/// ```
 #[derive(Default)]
 pub enum Transition {
     /// No transition animation
@@ -132,7 +172,10 @@ impl Transition {
     }
 }
 
-/// Transition configuration for route navigation
+/// Per-route transition configuration with optional one-off override.
+///
+/// Stores a `default` transition applied to every navigation and an optional
+/// `override_next` that takes precedence for the next navigation only.
 #[derive(Clone)]
 pub struct TransitionConfig {
     /// Default transition for this route
@@ -185,7 +228,7 @@ impl TransitionConfig {
 // Transition Builder
 // ============================================================================
 
-/// Transition context passed to transition builder
+/// Context values passed to custom transition renderers.
 pub struct TransitionContext {
     /// Animation progress from 0.0 to 1.0
     pub animation: f32,
@@ -193,10 +236,15 @@ pub struct TransitionContext {
     pub secondary_animation: f32,
 }
 
-/// Applies transition effect to element based on Transition type
+/// Apply a transition effect to an element.
 ///
-/// Takes an element, a transition type, and a progress value (0.0 to 1.0),
-/// then returns a `Div` with the appropriate visual transformation applied.
+/// Given a `progress` value in `0.0..=1.0`, wraps `element` in a [`Div`]
+/// with the appropriate positional offset and opacity for the transition type.
+///
+/// - [`Transition::None`] — returns the element unchanged (opacity 1, no offset).
+/// - [`Transition::Fade`] — sets opacity to `progress`.
+/// - [`Transition::Slide`] — offsets by `(1 - progress) * 100px` in the
+///   appropriate direction while also fading in.
 pub fn apply_transition(element: impl IntoElement, transition: &Transition, progress: f32) -> Div {
     // Always use consistent method chain to avoid recursion limit
     // Calculate all values first, then apply them in one chain
@@ -229,7 +277,7 @@ pub fn apply_transition(element: impl IntoElement, transition: &Transition, prog
         .child(element)
 }
 
-/// Easing function - ease in out cubic
+/// Cubic ease-in-out easing function (`t` in `0.0..=1.0`).
 pub fn ease_in_out_cubic(t: f32) -> f32 {
     if t < 0.5 {
         4.0 * t * t * t
@@ -238,7 +286,7 @@ pub fn ease_in_out_cubic(t: f32) -> f32 {
     }
 }
 
-/// Apply easing to progress
+/// Clamp `progress` to `0.0..=1.0` and apply [`ease_in_out_cubic`].
 pub fn apply_easing(progress: f32) -> f32 {
     ease_in_out_cubic(progress.clamp(0.0, 1.0))
 }
