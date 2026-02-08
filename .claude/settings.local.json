@@ -1,20 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "mcp__acp__Edit",
-      "mcp__acp__Bash",
-      "mcp__acp__Write",
-      "mcp__deepwiki__read_wiki_structure",
-      "mcp__deepwiki__read_wiki_contents",
-      "mcp__deepwiki__ask_question",
-      "mcp__github__search_code",
-      "mcp__github__get_file_contents",
-      "Skill(speckit.specify)",
-      "Skill(speckit.specify:*)",
-      "mcp__github__search_repositories",
-      "WebFetch(domain:docs.anthropic.com)",
-      "Skill(commit-commands:commit)",
-      "Skill(commit-commands:commit:*)"
+      "WebFetch(domain:docs.devin.ai)"
     ]
   }
 }
