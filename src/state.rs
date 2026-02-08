@@ -22,7 +22,7 @@
 //! then periodically check [`is_navigation_current`](RouterState::is_navigation_current).
 
 use crate::route::Route;
-use crate::{NavigationDirection, RouteChangeEvent, RouteMatch, RouteParams};
+use crate::{debug_log, trace_log, NavigationDirection, RouteChangeEvent, RouteMatch, RouteParams};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -103,6 +103,7 @@ impl RouterState {
     /// Routes are stored in registration order. The first route whose pattern
     /// matches the current path wins during [`current_match`](Self::current_match).
     pub fn add_route(&mut self, route: Route) {
+        trace_log!("RouterState: registered route '{}'", route.config.path);
         self.routes.push(Arc::new(route));
         self.cache.clear();
     }
@@ -218,6 +219,13 @@ impl RouterState {
         self.history.push(path.clone());
         self.current += 1;
 
+        debug_log!(
+            "History push: '{}' → '{}' (stack size: {})",
+            from.as_deref().unwrap_or(""),
+            path,
+            self.history.len()
+        );
+
         RouteChangeEvent {
             from,
             to: path,
@@ -231,6 +239,12 @@ impl RouterState {
     /// the back-button history.
     pub fn replace(&mut self, path: String) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
+
+        debug_log!(
+            "History replace: '{}' → '{}'",
+            from.as_deref().unwrap_or(""),
+            path
+        );
 
         self.history[self.current] = path.clone();
 
@@ -250,6 +264,14 @@ impl RouterState {
             self.current -= 1;
             let to = self.current_path().to_string();
 
+            debug_log!(
+                "History back: '{}' → '{}' (position {}/{})",
+                from.as_deref().unwrap_or(""),
+                to,
+                self.current,
+                self.history.len()
+            );
+
             Some(RouteChangeEvent {
                 from,
                 to,
@@ -268,6 +290,14 @@ impl RouterState {
             let from = Some(self.current_path().to_string());
             self.current += 1;
             let to = self.current_path().to_string();
+
+            debug_log!(
+                "History forward: '{}' → '{}' (position {}/{})",
+                from.as_deref().unwrap_or(""),
+                to,
+                self.current,
+                self.history.len()
+            );
 
             Some(RouteChangeEvent {
                 from,

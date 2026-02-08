@@ -27,7 +27,7 @@
 //! ```
 
 use crate::route::Route;
-use crate::{trace_log, RouteParams};
+use crate::{debug_log, trace_log, RouteParams};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
@@ -161,10 +161,18 @@ impl RouteCache {
 
     /// Clear both sub-caches and increment the invalidation counter.
     pub fn clear(&mut self) {
-        trace_log!("Clearing route cache");
+        let parent_len = self.parent_cache.len();
+        let child_len = self.child_cache.len();
         self.parent_cache.clear();
         self.child_cache.clear();
         self.stats.invalidations += 1;
+        debug_log!(
+            "Cache cleared: {} parent + {} child entries removed ({} total invalidations, parent hit rate: {:.1}%)",
+            parent_len,
+            child_len,
+            self.stats.invalidations,
+            self.stats.parent_hit_rate() * 100.0
+        );
     }
 
     /// Look up the cached parent [`RouteId`] for the given `path`.

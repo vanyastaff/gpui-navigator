@@ -36,7 +36,9 @@ use crate::resolve::{resolve_match_stack, MatchStack};
 use crate::route::NamedRouteRegistry;
 #[cfg(feature = "transition")]
 use crate::transition::Transition;
-use crate::{IntoRoute, Route, RouteParams, RouterState};
+use crate::{
+    debug_log, error_log, info_log, trace_log, warn_log, IntoRoute, Route, RouteParams, RouterState,
+};
 use gpui::{AnyView, App, BorrowAppContext, Global};
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
@@ -182,8 +184,15 @@ impl GlobalRouter {
     /// [`url_for`](Self::url_for).
     pub fn add_route(&mut self, route: Route) {
         if let Some(name) = &route.config.name {
+            info_log!(
+                "Registered route '{}' (name: '{}')",
+                route.config.path,
+                name
+            );
             self.named_routes
                 .register(name.clone(), route.config.path.clone());
+        } else {
+            info_log!("Registered route '{}'", route.config.path);
         }
         self.state.add_route(route);
         #[cfg(feature = "cache")]
@@ -234,6 +243,11 @@ impl GlobalRouter {
         redirect_depth: usize,
     ) -> NavigationResult {
         if redirect_depth >= MAX_REDIRECT_DEPTH {
+            error_log!(
+                "Redirect loop detected (depth {}) navigating to '{}'",
+                redirect_depth,
+                path
+            );
             return NavigationResult::Blocked {
                 reason: format!(
                     "Redirect loop detected (depth {}): target '{}'",
@@ -243,7 +257,9 @@ impl GlobalRouter {
             };
         }
 
-        let request = NavigationRequest::with_from(path.clone(), self.current_path().to_string());
+        let from = self.current_path().to_string();
+        info_log!("Navigation {:?}: '{}' → '{}'", op, from, path);
+        let request = NavigationRequest::with_from(path.clone(), from);
 
         // Step 1: Run guards
         #[cfg(feature = "guard")]
@@ -252,13 +268,14 @@ impl GlobalRouter {
             match guard_result {
                 NavigationAction::Continue => {}
                 NavigationAction::Deny { reason } => {
+                    warn_log!("Navigation to '{}' blocked: {}", path, reason);
                     return NavigationResult::Blocked {
                         reason,
                         redirect: None,
                     };
                 }
                 NavigationAction::Redirect { to, reason } => {
-                    crate::debug_log!(
+                    debug_log!(
                         "Guard redirecting from '{}' to '{}': {:?}",
                         path,
                         to,
@@ -308,6 +325,11 @@ impl GlobalRouter {
         #[cfg(feature = "middleware")]
         self.run_middleware_after(cx, &request);
 
+        info_log!(
+            "Navigation complete: '{}' (stack depth: {})",
+            event.to,
+            self.match_stack.len()
+        );
         NavigationResult::Success { path: event.to }
     }
 
@@ -329,11 +351,19 @@ impl GlobalRouter {
         // Sort by priority (higher first)
         guards.sort_by_key(|(_, prio)| std::cmp::Reverse(*prio));
 
+        debug_log!("Collected {} guards for '{}'", guards.len(), path);
+
         // Check each guard — first non-Continue result wins
-        for (guard, _) in &guards {
+        for (guard, prio) in &guards {
             let result = guard.check(cx, request);
+            trace_log!(
+                "Guard '{}' (priority {}) → {:?}",
+                guard.name(),
+                prio,
+                result
+            );
             if !matches!(result, NavigationAction::Continue) {
-                crate::debug_log!(
+                debug_log!(
                     "Guard '{}' blocked navigation to '{}'",
                     guard.name(),
                     request.to
@@ -405,7 +435,17 @@ impl GlobalRouter {
         // Sort by priority (higher first for before)
         middleware.sort_by_key(|(_, prio)| std::cmp::Reverse(*prio));
 
+        debug_log!(
+            "Running {} before-middleware for '{}'",
+            middleware.len(),
+            request.to
+        );
         for (mw, _) in &middleware {
+            trace_log!(
+                "Middleware '{}' before_navigation for '{}'",
+                mw.name(),
+                request.to
+            );
             mw.before_navigation(cx, request);
         }
     }
@@ -423,7 +463,17 @@ impl GlobalRouter {
         // Sort by priority ascending for after (reverse of before — stack-like)
         middleware.sort_by_key(|(_, prio)| *prio);
 
+        debug_log!(
+            "Running {} after-middleware for '{}'",
+            middleware.len(),
+            request.to
+        );
         for (mw, _) in &middleware {
+            trace_log!(
+                "Middleware '{}' after_navigation for '{}'",
+                mw.name(),
+                request.to
+            );
             mw.after_navigation(cx, request);
         }
     }
@@ -482,7 +532,16 @@ impl GlobalRouter {
         params: &RouteParams,
         cx: &App,
     ) -> Option<NavigationResult> {
-        let url = self.named_routes.url_for(name, params)?;
+        let url = match self.named_routes.url_for(name, params) {
+            Some(url) => {
+                debug_log!("Named route '{}' resolved to '{}'", name, url);
+                url
+            }
+            None => {
+                warn_log!("Named route '{}' not found in registry", name);
+                return None;
+            }
+        };
         Some(self.push(url, cx))
     }
 
@@ -833,7 +892,7 @@ impl Navigator {
     /// Navigate to a new path.
     pub fn push(cx: &mut (impl BorrowAppContext + BorrowMut<App>), route: impl IntoRoute) {
         let descriptor = route.into_route();
-        crate::debug_log!("Navigator::push: pushing path '{}'", descriptor.path);
+        debug_log!("Navigator::push: pushing path '{}'", descriptor.path);
         cx.update_global::<GlobalRouter, _>(|router, cx| {
             let app: &App = cx.borrow_mut();
             router.push(descriptor.path, app);

@@ -57,7 +57,7 @@ use crate::middleware::RouteMiddleware;
 use crate::params::RouteParams;
 #[cfg(feature = "transition")]
 use crate::transition::TransitionConfig;
-use crate::RouteMatch;
+use crate::{trace_log, warn_log, RouteMatch};
 use gpui::{AnyElement, AnyView, App, AppContext, BorrowAppContext, IntoElement, Render, Window};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -190,6 +190,7 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
 
     // Consecutive slashes check
     if path.contains("//") {
+        warn_log!("Invalid route path '{}': consecutive slashes", path);
         return Err("Route path cannot contain consecutive slashes".to_string());
     }
 
@@ -202,6 +203,7 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
         if let Some(param) = segment.strip_prefix(':') {
             // Check parameter name is not empty
             if param.is_empty() {
+                warn_log!("Invalid route path '{}': empty parameter name", path);
                 return Err("Route parameter name cannot be empty".to_string());
             }
 
@@ -214,6 +216,11 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
 
             // Check parameter name is alphanumeric
             if !param_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                warn_log!(
+                    "Invalid route path '{}': parameter '{}' has invalid characters",
+                    path,
+                    param_name
+                );
                 return Err(format!(
                     "Route parameter '{}' must contain only alphanumeric characters and underscores",
                     param_name
@@ -222,6 +229,11 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
 
             // Check for duplicate parameters
             if !param_names.insert(param_name.to_string()) {
+                warn_log!(
+                    "Invalid route path '{}': duplicate parameter '{}'",
+                    path,
+                    param_name
+                );
                 return Err(format!("Duplicate route parameter: '{}'", param_name));
             }
         }
@@ -848,6 +860,11 @@ impl Route {
         cx: &mut App,
         params: &RouteParams,
     ) -> Option<AnyElement> {
+        trace_log!(
+            "Building route '{}' with {} params",
+            self.config.path,
+            params.len()
+        );
         self.builder.as_ref().map(|b| b(window, cx, params))
     }
 

@@ -44,7 +44,7 @@
 
 use crate::nested::normalize_path;
 use crate::route::Route;
-use crate::RouteParams;
+use crate::{debug_log, trace_log, warn_log, RouteParams};
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -318,9 +318,10 @@ pub fn resolve_match_stack(routes: &[Arc<Route>], path: &str) -> MatchStack {
     let mut stack = MatchStack::new();
     resolve_recursive(routes, &segments, 0, &RouteParams::new(), &mut stack);
 
-    #[cfg(debug_assertions)]
-    {
-        crate::debug_log!(
+    if stack.is_empty() {
+        warn_log!("No route matched path '{}'", path);
+    } else {
+        debug_log!(
             "Resolved path '{}' → {} levels: [{}]",
             path,
             stack.len(),
@@ -349,7 +350,7 @@ fn resolve_recursive(
 ) -> bool {
     // Safety: prevent infinite recursion
     if depth >= MAX_DEPTH {
-        crate::warn_log!(
+        warn_log!(
             "Maximum route nesting depth ({}) exceeded. Check for circular routes.",
             MAX_DEPTH
         );
@@ -368,6 +369,13 @@ fn resolve_recursive(
         } else {
             route_path.split('/').collect()
         };
+
+        trace_log!(
+            "Trying route '{}' at depth {} ({} remaining segments)",
+            route_path,
+            depth,
+            remaining.len()
+        );
 
         // === Try to match this route's segments ===
 
@@ -446,6 +454,13 @@ fn resolve_recursive(
         let consumed = route_segments.len();
         let after = &remaining[consumed..];
 
+        trace_log!(
+            "Matched route '{}' at depth {}, params: {:?}",
+            route_path,
+            depth,
+            params.all()
+        );
+
         stack.entries.push(MatchEntry {
             route: Arc::clone(route),
             params: params.clone(),
@@ -469,6 +484,11 @@ fn resolve_recursive(
         }
 
         // No children matched (or no children) → backtrack
+        trace_log!(
+            "Backtracking from route '{}' at depth {}",
+            route_path,
+            depth
+        );
         stack.entries.pop();
     }
 
@@ -494,6 +514,7 @@ fn try_index_route(
             .trim_end_matches('/');
 
         if child_path.is_empty() {
+            trace_log!("Index route (empty path) resolved at depth {}", depth);
             stack.entries.push(MatchEntry {
                 route: Arc::clone(child),
                 params: params.clone(),
@@ -517,6 +538,7 @@ fn try_index_route(
             .trim_end_matches('/');
 
         if child_path == "index" {
+            trace_log!("Index route ('index') resolved at depth {}", depth);
             stack.entries.push(MatchEntry {
                 route: Arc::clone(child),
                 params: params.clone(),
@@ -525,6 +547,12 @@ fn try_index_route(
             return;
         }
     }
+
+    trace_log!(
+        "No index route among {} children at depth {}",
+        children.len(),
+        depth
+    );
 }
 
 // ============================================================================
