@@ -627,6 +627,15 @@ cargo run --example error_demo --all-features
 
 # Stateful components with Entity caching
 cargo run --example stateful_demo --all-features
+
+# AuthGuard, RoleGuard, PermissionGuard, guard_fn
+cargo run --example guard_demo --all-features
+
+# RouteMiddleware trait, middleware_fn, execution logging
+cargo run --example middleware_demo --all-features
+
+# RouteLifecycle: on_enter, on_exit, can_deactivate
+cargo run --example lifecycle_demo --all-features
 ```
 
 ## Architecture Overview

@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:docs.devin.ai)"
+      "WebFetch(domain:docs.devin.ai)",
+      "mcp__acp__Bash",
+      "mcp__acp__Edit",
+      "Skill(commit-commands:commit)",
+      "Skill(commit-commands:commit:*)",
+      "mcp__github__get_file_contents",
+      "WebFetch(domain:rust-lang.github.io)",
+      "mcp__acp__Write"
     ]
   }
 }
