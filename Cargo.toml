@@ -73,3 +73,15 @@ path = "examples/stateful_demo.rs"
 [[example]]
 name = "error_demo"
 path = "examples/error_demo.rs"
+
+[[example]]
+name = "guard_demo"
+path = "examples/guard_demo.rs"
+
+[[example]]
+name = "middleware_demo"
+path = "examples/middleware_demo.rs"
+
+[[example]]
+name = "lifecycle_demo"
+path = "examples/lifecycle_demo.rs"
