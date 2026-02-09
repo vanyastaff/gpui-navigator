@@ -165,11 +165,15 @@ impl NavigationResult {
 // Error Handlers
 // ============================================================================
 
-/// Handler for navigation errors
-pub type ErrorHandler = Arc<dyn Fn(&mut App, &NavigationError) -> AnyElement + Send + Sync>;
+/// Handler for navigation errors.
+///
+/// Takes `&App` (immutable) because rendering should not mutate application state.
+pub type ErrorHandler = Arc<dyn Fn(&App, &NavigationError) -> AnyElement + Send + Sync>;
 
-/// Handler for 404 not found
-pub type NotFoundHandler = Arc<dyn Fn(&mut App, &str) -> AnyElement + Send + Sync>;
+/// Handler for 404 not found.
+///
+/// Takes `&App` (immutable) because rendering should not mutate application state.
+pub type NotFoundHandler = Arc<dyn Fn(&App, &str) -> AnyElement + Send + Sync>;
 
 /// Builder for registering custom error-page renderers.
 ///
@@ -187,6 +191,7 @@ pub type NotFoundHandler = Arc<dyn Fn(&mut App, &str) -> AnyElement + Send + Syn
 ///     });
 /// ```
 #[must_use]
+#[derive(Clone)]
 pub struct ErrorHandlers {
     /// Handler for 404 not found errors
     pub not_found: Option<NotFoundHandler>,
@@ -207,7 +212,7 @@ impl ErrorHandlers {
     /// Set the 404 not found handler
     pub fn on_not_found<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&mut App, &str) -> AnyElement + Send + Sync + 'static,
+        F: Fn(&App, &str) -> AnyElement + Send + Sync + 'static,
     {
         self.not_found = Some(Arc::new(handler));
         self
@@ -216,19 +221,19 @@ impl ErrorHandlers {
     /// Set the general error handler
     pub fn on_error<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&mut App, &NavigationError) -> AnyElement + Send + Sync + 'static,
+        F: Fn(&App, &NavigationError) -> AnyElement + Send + Sync + 'static,
     {
         self.error = Some(Arc::new(handler));
         self
     }
 
     /// Render a 404 not found page
-    pub fn render_not_found(&self, cx: &mut App, path: &str) -> Option<AnyElement> {
+    pub fn render_not_found(&self, cx: &App, path: &str) -> Option<AnyElement> {
         self.not_found.as_ref().map(|handler| handler(cx, path))
     }
 
     /// Render an error page
-    pub fn render_error(&self, cx: &mut App, error: &NavigationError) -> Option<AnyElement> {
+    pub fn render_error(&self, cx: &App, error: &NavigationError) -> Option<AnyElement> {
         self.error.as_ref().map(|handler| handler(cx, error))
     }
 }
@@ -301,7 +306,7 @@ mod tests {
 
         assert!(handlers.not_found.is_some());
 
-        let element = cx.update(|cx| handlers.render_not_found(cx, "/invalid"));
+        let element = cx.read(|cx| handlers.render_not_found(cx, "/invalid"));
         assert!(element.is_some());
     }
 
@@ -316,7 +321,7 @@ mod tests {
             path: "/test".to_string(),
         };
 
-        let element = cx.update(|cx| handlers.render_error(cx, &error));
+        let element = cx.read(|cx| handlers.render_error(cx, &error));
         assert!(element.is_some());
     }
 }

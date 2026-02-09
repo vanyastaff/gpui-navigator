@@ -29,7 +29,7 @@
 //! assert!(history.can_go_forward());
 //! ```
 
-use crate::NavigationDirection;
+use crate::{NavigationDirection, RouteChangeEvent};
 
 /// Navigation history entry
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,13 +42,13 @@ pub struct HistoryEntry {
 
 impl HistoryEntry {
     /// Create a new history entry
-    #[must_use] 
+    #[must_use]
     pub const fn new(path: String) -> Self {
         Self { path, state: None }
     }
 
     /// Create with state
-    #[must_use] 
+    #[must_use]
     pub const fn with_state(path: String, state: HistoryState) -> Self {
         Self {
             path,
@@ -69,7 +69,7 @@ pub struct HistoryState {
 
 impl HistoryState {
     /// Create new empty state
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             data: std::collections::HashMap::new(),
@@ -82,7 +82,7 @@ impl HistoryState {
     }
 
     /// Get a value
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
     }
@@ -110,7 +110,7 @@ pub struct History {
 
 impl History {
     /// Create a new history with the given initial path and a default limit of 1000 entries.
-    #[must_use] 
+    #[must_use]
     pub fn new(initial_path: String) -> Self {
         Self {
             entries: vec![HistoryEntry::new(initial_path)],
@@ -120,7 +120,7 @@ impl History {
     }
 
     /// Create a new history with a custom maximum size (`0` = unlimited).
-    #[must_use] 
+    #[must_use]
     pub fn with_max_size(initial_path: String, max_size: usize) -> Self {
         Self {
             entries: vec![HistoryEntry::new(initial_path)],
@@ -130,13 +130,13 @@ impl History {
     }
 
     /// Return the path of the current (cursor) entry.
-    #[must_use] 
+    #[must_use]
     pub fn current_path(&self) -> &str {
         &self.entries[self.current].path
     }
 
     /// Return a reference to the current [`HistoryEntry`] (path + optional state).
-    #[must_use] 
+    #[must_use]
     pub fn current_entry(&self) -> &HistoryEntry {
         &self.entries[self.current]
     }
@@ -144,7 +144,7 @@ impl History {
     /// Push a new path onto history
     ///
     /// This truncates any forward history and adds the new entry
-    pub fn push(&mut self, path: String) -> NavigationEvent {
+    pub fn push(&mut self, path: String) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
 
         // Remove forward history when pushing
@@ -157,7 +157,7 @@ impl History {
         // Enforce max size limit
         self.enforce_size_limit();
 
-        NavigationEvent {
+        RouteChangeEvent {
             from,
             to: path,
             direction: NavigationDirection::Forward,
@@ -165,7 +165,7 @@ impl History {
     }
 
     /// Push a new path with associated [`HistoryState`] data.
-    pub fn push_with_state(&mut self, path: String, state: HistoryState) -> NavigationEvent {
+    pub fn push_with_state(&mut self, path: String, state: HistoryState) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
 
         // Remove forward history
@@ -178,7 +178,7 @@ impl History {
 
         self.enforce_size_limit();
 
-        NavigationEvent {
+        RouteChangeEvent {
             from,
             to: path,
             direction: NavigationDirection::Forward,
@@ -186,12 +186,12 @@ impl History {
     }
 
     /// Replace the current entry without modifying the stack length.
-    pub fn replace(&mut self, path: String) -> NavigationEvent {
+    pub fn replace(&mut self, path: String) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
 
         self.entries[self.current] = HistoryEntry::new(path.clone());
 
-        NavigationEvent {
+        RouteChangeEvent {
             from,
             to: path,
             direction: NavigationDirection::Replace,
@@ -199,12 +199,12 @@ impl History {
     }
 
     /// Replace the current entry with a new path and [`HistoryState`].
-    pub fn replace_with_state(&mut self, path: String, state: HistoryState) -> NavigationEvent {
+    pub fn replace_with_state(&mut self, path: String, state: HistoryState) -> RouteChangeEvent {
         let from = Some(self.current_path().to_string());
 
         self.entries[self.current] = HistoryEntry::with_state(path.clone(), state);
 
-        NavigationEvent {
+        RouteChangeEvent {
             from,
             to: path,
             direction: NavigationDirection::Replace,
@@ -212,13 +212,13 @@ impl History {
     }
 
     /// Move the cursor one step back. Returns `None` if already at the oldest entry.
-    pub fn back(&mut self) -> Option<NavigationEvent> {
+    pub fn back(&mut self) -> Option<RouteChangeEvent> {
         if self.can_go_back() {
             let from = Some(self.current_path().to_string());
             self.current -= 1;
             let to = self.current_path().to_string();
 
-            Some(NavigationEvent {
+            Some(RouteChangeEvent {
                 from,
                 to,
                 direction: NavigationDirection::Back,
@@ -229,13 +229,13 @@ impl History {
     }
 
     /// Move the cursor one step forward. Returns `None` if already at the newest entry.
-    pub fn forward(&mut self) -> Option<NavigationEvent> {
+    pub fn forward(&mut self) -> Option<RouteChangeEvent> {
         if self.can_go_forward() {
             let from = Some(self.current_path().to_string());
             self.current += 1;
             let to = self.current_path().to_string();
 
-            Some(NavigationEvent {
+            Some(RouteChangeEvent {
                 from,
                 to,
                 direction: NavigationDirection::Forward,
@@ -246,15 +246,35 @@ impl History {
     }
 
     /// Return `true` if [`back`](Self::back) would succeed.
-    #[must_use] 
+    #[must_use]
     pub const fn can_go_back(&self) -> bool {
         self.current > 0
     }
 
     /// Return `true` if [`forward`](Self::forward) would succeed.
-    #[must_use] 
+    #[must_use]
     pub fn can_go_forward(&self) -> bool {
         self.current < self.entries.len() - 1
+    }
+
+    /// Peek at the path we would navigate to on [`back()`](Self::back), without moving the cursor.
+    #[must_use]
+    pub fn peek_back_path(&self) -> Option<&str> {
+        if self.current > 0 {
+            Some(&self.entries[self.current - 1].path)
+        } else {
+            None
+        }
+    }
+
+    /// Peek at the path we would navigate to on [`forward()`](Self::forward), without moving the cursor.
+    #[must_use]
+    pub fn peek_forward_path(&self) -> Option<&str> {
+        if self.current < self.entries.len() - 1 {
+            Some(&self.entries[self.current + 1].path)
+        } else {
+            None
+        }
     }
 
     /// Clear all history and reset to a single entry at `initial_path`.
@@ -265,25 +285,25 @@ impl History {
     }
 
     /// Return the total number of entries in the stack.
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if history is empty (should never be true in practice)
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Return a slice of all entries (useful for serialization / persistence).
-    #[must_use] 
+    #[must_use]
     pub fn entries(&self) -> &[HistoryEntry] {
         &self.entries
     }
 
     /// Return the current cursor position in the stack.
-    #[must_use] 
+    #[must_use]
     pub const fn current_index(&self) -> usize {
         self.current
     }
@@ -313,17 +333,6 @@ impl Default for History {
     fn default() -> Self {
         Self::new("/".to_string())
     }
-}
-
-/// Navigation event from history operations
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NavigationEvent {
-    /// Previous path
-    pub from: Option<String>,
-    /// New path
-    pub to: String,
-    /// Navigation direction
-    pub direction: NavigationDirection,
 }
 
 #[cfg(test)]

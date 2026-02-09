@@ -500,7 +500,7 @@ async fn test_not_found_handler_rendering(cx: &mut TestAppContext) {
     });
 
     // Test that the handler can render a not found page
-    let element = cx.update(|cx| handlers.render_not_found(cx, "/non-existent-page"));
+    let element = cx.read(|cx| handlers.render_not_found(cx, "/non-existent-page"));
     assert!(element.is_some());
 }
 
@@ -521,14 +521,14 @@ async fn test_error_handler_rendering(cx: &mut TestAppContext) {
         });
 
     // Test not found handler
-    let not_found_element = cx.update(|cx| handlers.render_not_found(cx, "/invalid"));
+    let not_found_element = cx.read(|cx| handlers.render_not_found(cx, "/invalid"));
     assert!(not_found_element.is_some());
 
     // Test error handler
     let error = NavigationError::RouteNotFound {
         path: "/test".to_string(),
     };
-    let error_element = cx.update(|cx| handlers.render_error(cx, &error));
+    let error_element = cx.read(|cx| handlers.render_error(cx, &error));
     assert!(error_element.is_some());
 }
 
@@ -552,14 +552,14 @@ async fn test_custom_error_pages(cx: &mut TestAppContext) {
         });
 
     // Test 404 page with complex layout
-    let element = cx.update(|cx| handlers.render_not_found(cx, "/does-not-exist"));
+    let element = cx.read(|cx| handlers.render_not_found(cx, "/does-not-exist"));
     assert!(element.is_some());
 
     // Test error page with navigation error
     let error = NavigationError::GuardBlocked {
         reason: "Not authenticated".to_string(),
     };
-    let element = cx.update(|cx| handlers.render_error(cx, &error));
+    let element = cx.read(|cx| handlers.render_error(cx, &error));
     assert!(element.is_some());
 }
 

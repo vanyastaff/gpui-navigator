@@ -21,8 +21,9 @@
 //! Call [`start_navigation`](RouterState::start_navigation) to obtain an ID,
 //! then periodically check [`is_navigation_current`](RouterState::is_navigation_current).
 
+use crate::history::{History, HistoryEntry, HistoryState};
 use crate::route::Route;
-use crate::{debug_log, trace_log, NavigationDirection, RouteChangeEvent, RouteMatch, RouteParams};
+use crate::{debug_log, trace_log, RouteChangeEvent, RouteMatch, RouteParams};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -49,10 +50,8 @@ use std::sync::Arc;
 /// ```
 #[derive(Debug)]
 pub struct RouterState {
-    /// Navigation history stack
-    history: Vec<String>,
-    /// Current position in history
-    current: usize,
+    /// Navigation history — delegates to the standalone [`History`] struct.
+    history: History,
     /// Registered routes
     routes: Vec<Arc<Route>>,
     /// Route cache
@@ -66,11 +65,10 @@ pub struct RouterState {
 
 impl RouterState {
     /// Create a new router state with the initial path set to `"/"`.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            history: vec!["/".to_string()],
-            current: 0,
+            history: History::new("/".to_string()),
             routes: Vec::new(),
             cache: HashMap::new(),
             current_params: RouteParams::new(),
@@ -82,7 +80,7 @@ impl RouterState {
     ///
     /// The value is monotonically increasing and is shared across clones of
     /// this state (via `Arc<AtomicUsize>`).
-    #[must_use] 
+    #[must_use]
     pub fn navigation_id(&self) -> usize {
         self.navigation_id.load(Ordering::SeqCst)
     }
@@ -91,13 +89,13 @@ impl RouterState {
     ///
     /// This increments the navigation counter, allowing previous navigations
     /// to detect they've been superseded and should be cancelled.
-    #[must_use] 
+    #[must_use]
     pub fn start_navigation(&self) -> usize {
         self.navigation_id.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     /// Check if a navigation is still current (not cancelled by newer navigation)
-    #[must_use] 
+    #[must_use]
     pub fn is_navigation_current(&self, nav_id: usize) -> bool {
         self.navigation_id() == nav_id
     }
@@ -113,20 +111,19 @@ impl RouterState {
     }
 
     /// Return the current path in the history stack.
-    ///
-    /// Falls back to `"/"` if internal state is inconsistent (should never happen).
+    #[must_use]
     pub fn current_path(&self) -> &str {
-        self.history.get(self.current).map_or("/", String::as_str)
+        self.history.current_path()
     }
 
     /// Return a slice of all registered routes (in registration order).
-    #[must_use] 
+    #[must_use]
     pub fn routes(&self) -> &[Arc<Route>] {
         &self.routes
     }
 
     /// Return the current route parameters (used for parameter inheritance in nested routing).
-    #[must_use] 
+    #[must_use]
     pub const fn current_params(&self) -> &RouteParams {
         &self.current_params
     }
@@ -164,7 +161,7 @@ impl RouterState {
     ///
     /// Use this when you need to access the current route from a non-mutable context,
     /// such as in a GPUI Render implementation.
-    #[must_use] 
+    #[must_use]
     pub fn current_match_immutable(&self) -> Option<RouteMatch> {
         let path = self.current_path();
 
@@ -188,7 +185,7 @@ impl RouterState {
     /// With `MatchStack` architecture, rendering uses `GlobalRouter::match_stack()`.
     /// This method is kept for compatibility — it returns the first registered
     /// route whose pattern matches the current path (exact or prefix).
-    #[must_use] 
+    #[must_use]
     pub fn current_route(&self) -> Option<&Arc<Route>> {
         let path = self.current_path();
         for route in &self.routes {
@@ -220,27 +217,28 @@ impl RouterState {
     ///
     /// Returns a [`RouteChangeEvent`] describing the transition.
     pub fn push(&mut self, path: String) -> RouteChangeEvent {
-        let from = Some(self.current_path().to_string());
-
-        // Remove forward history when pushing
-        self.history.truncate(self.current + 1);
-
-        // Add new path
-        self.history.push(path.clone());
-        self.current += 1;
-
+        let event = self.history.push(path);
         debug_log!(
             "History push: '{}' → '{}' (stack size: {})",
-            from.as_deref().unwrap_or(""),
-            path,
+            event.from.as_deref().unwrap_or(""),
+            event.to,
             self.history.len()
         );
+        event
+    }
 
-        RouteChangeEvent {
-            from,
-            to: path,
-            direction: NavigationDirection::Forward,
-        }
+    /// Push a new path with associated [`HistoryState`] data.
+    ///
+    /// Allows attaching arbitrary key-value state (scroll position, form data, etc.)
+    /// to the history entry.
+    pub fn push_with_state(&mut self, path: String, state: HistoryState) -> RouteChangeEvent {
+        let event = self.history.push_with_state(path, state);
+        debug_log!(
+            "History push (with state): '{}' → '{}'",
+            event.from.as_deref().unwrap_or(""),
+            event.to,
+        );
+        event
     }
 
     /// Replace the current history entry in-place without adding a new one.
@@ -248,114 +246,89 @@ impl RouterState {
     /// Useful for redirects where the intermediate path should not appear in
     /// the back-button history.
     pub fn replace(&mut self, path: String) -> RouteChangeEvent {
-        let from = Some(self.current_path().to_string());
-
+        let event = self.history.replace(path);
         debug_log!(
             "History replace: '{}' → '{}'",
-            from.as_deref().unwrap_or(""),
-            path
+            event.from.as_deref().unwrap_or(""),
+            event.to,
         );
+        event
+    }
 
-        self.history[self.current].clone_from(&path);
-
-        RouteChangeEvent {
-            from,
-            to: path,
-            direction: NavigationDirection::Replace,
-        }
+    /// Replace the current history entry with associated [`HistoryState`] data.
+    pub fn replace_with_state(&mut self, path: String, state: HistoryState) -> RouteChangeEvent {
+        let event = self.history.replace_with_state(path, state);
+        debug_log!(
+            "History replace (with state): '{}' → '{}'",
+            event.from.as_deref().unwrap_or(""),
+            event.to,
+        );
+        event
     }
 
     /// Move the cursor one step back in the history stack.
     ///
     /// Returns `None` if already at the oldest entry.
     pub fn back(&mut self) -> Option<RouteChangeEvent> {
-        if self.current > 0 {
-            let from = Some(self.current_path().to_string());
-            self.current -= 1;
-            let to = self.current_path().to_string();
-
-            debug_log!(
-                "History back: '{}' → '{}' (position {}/{})",
-                from.as_deref().unwrap_or(""),
-                to,
-                self.current,
-                self.history.len()
-            );
-
-            Some(RouteChangeEvent {
-                from,
-                to,
-                direction: NavigationDirection::Back,
-            })
-        } else {
-            None
-        }
+        let event = self.history.back()?;
+        debug_log!(
+            "History back: '{}' → '{}' (position {}/{})",
+            event.from.as_deref().unwrap_or(""),
+            event.to,
+            self.history.current_index(),
+            self.history.len()
+        );
+        Some(event)
     }
 
     /// Move the cursor one step forward in the history stack.
     ///
     /// Returns `None` if already at the newest entry.
     pub fn forward(&mut self) -> Option<RouteChangeEvent> {
-        if self.current < self.history.len() - 1 {
-            let from = Some(self.current_path().to_string());
-            self.current += 1;
-            let to = self.current_path().to_string();
-
-            debug_log!(
-                "History forward: '{}' → '{}' (position {}/{})",
-                from.as_deref().unwrap_or(""),
-                to,
-                self.current,
-                self.history.len()
-            );
-
-            Some(RouteChangeEvent {
-                from,
-                to,
-                direction: NavigationDirection::Forward,
-            })
-        } else {
-            None
-        }
+        let event = self.history.forward()?;
+        debug_log!(
+            "History forward: '{}' → '{}' (position {}/{})",
+            event.from.as_deref().unwrap_or(""),
+            event.to,
+            self.history.current_index(),
+            self.history.len()
+        );
+        Some(event)
     }
 
     /// Return `true` if [`back`](Self::back) would succeed.
-    #[must_use] 
+    #[must_use]
     pub const fn can_go_back(&self) -> bool {
-        self.current > 0
+        self.history.can_go_back()
     }
 
     /// Return `true` if [`forward`](Self::forward) would succeed.
-    #[must_use] 
+    #[must_use]
     pub fn can_go_forward(&self) -> bool {
-        self.current < self.history.len() - 1
+        self.history.can_go_forward()
     }
 
     /// Peek at the path we would navigate to on `back()`, without actually navigating.
-    #[must_use] 
+    #[must_use]
     pub fn peek_back_path(&self) -> Option<&str> {
-        if self.current > 0 {
-            Some(&self.history[self.current - 1])
-        } else {
-            None
-        }
+        self.history.peek_back_path()
     }
 
     /// Peek at the path we would navigate to on `forward()`, without actually navigating.
-    #[must_use] 
+    #[must_use]
     pub fn peek_forward_path(&self) -> Option<&str> {
-        if self.current < self.history.len() - 1 {
-            Some(&self.history[self.current + 1])
-        } else {
-            None
-        }
+        self.history.peek_forward_path()
+    }
+
+    /// Return a reference to the current [`HistoryEntry`] (path + optional state).
+    #[must_use]
+    pub fn current_entry(&self) -> &HistoryEntry {
+        self.history.current_entry()
     }
 
     /// Reset the history stack to a single `"/"` entry, clearing the match cache.
     pub fn clear(&mut self) {
-        self.history.clear();
-        self.history.push("/".to_string());
-        self.current = 0;
+        self.history.clear("/".to_string());
         self.cache.clear();
     }
 }
@@ -370,7 +343,6 @@ impl Clone for RouterState {
     fn clone(&self) -> Self {
         Self {
             history: self.history.clone(),
-            current: self.current,
             routes: self.routes.clone(),
             cache: self.cache.clone(),
             current_params: self.current_params.clone(),

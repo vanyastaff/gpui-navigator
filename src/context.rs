@@ -29,8 +29,8 @@
 
 #[cfg(feature = "cache")]
 use crate::cache::{CacheStats, RouteCache};
-use crate::error::NavigationResult;
-#[cfg(feature = "guard")]
+use crate::error::{ErrorHandlers, NavigationResult};
+use crate::history::{HistoryEntry, HistoryState};
 use crate::lifecycle::NavigationAction;
 use crate::nested::trim_slashes;
 use crate::resolve::{resolve_match_stack, MatchStack};
@@ -149,6 +149,8 @@ pub struct GlobalRouter {
     component_cache: HashMap<String, AnyView>,
     /// Insertion-order tracking for FIFO eviction of `component_cache`.
     component_cache_order: std::collections::VecDeque<String>,
+    /// Custom error handlers for 404 and navigation errors.
+    error_handlers: ErrorHandlers,
 }
 
 impl GlobalRouter {
@@ -236,6 +238,49 @@ impl GlobalRouter {
         Some(self.navigate_with_pipeline(target, cx, NavigateOp::Forward, 0))
     }
 
+    /// Push a new path with associated [`HistoryState`] data, running the full pipeline.
+    ///
+    /// Allows attaching arbitrary key-value state (scroll position, form data, etc.)
+    /// to the history entry. The pipeline (guards, middleware) runs first; state
+    /// is only attached if navigation succeeds.
+    pub fn push_with_state(
+        &mut self,
+        path: String,
+        state: HistoryState,
+        cx: &App,
+    ) -> NavigationResult {
+        // Run the pipeline first (guards, middleware, etc.)
+        // We use the normal push pipeline, then retroactively attach state
+        let result = self.navigate_with_pipeline(path, cx, NavigateOp::Push, 0);
+        if matches!(result, NavigationResult::Success { .. }) {
+            // Attach state to the current history entry
+            let current_path = self.state.current_path().to_string();
+            self.state.replace_with_state(current_path, state);
+        }
+        result
+    }
+
+    /// Replace current path with associated [`HistoryState`] data, running the full pipeline.
+    pub fn replace_with_state(
+        &mut self,
+        path: String,
+        state: HistoryState,
+        cx: &App,
+    ) -> NavigationResult {
+        let result = self.navigate_with_pipeline(path, cx, NavigateOp::Replace, 0);
+        if matches!(result, NavigationResult::Success { .. }) {
+            let current_path = self.state.current_path().to_string();
+            self.state.replace_with_state(current_path, state);
+        }
+        result
+    }
+
+    /// Return the current [`HistoryEntry`] (path + optional state data).
+    #[must_use]
+    pub fn current_entry(&self) -> &HistoryEntry {
+        self.state.current_entry()
+    }
+
     /// Core navigation method that runs the full pipeline.
     fn navigate_with_pipeline(
         &mut self,
@@ -259,9 +304,8 @@ impl GlobalRouter {
         let from = self.current_path().to_string();
         info_log!("Navigation {:?}: '{}' → '{}'", op, from, path);
 
-        // Build request only when guards or middleware need it
-        #[cfg(any(feature = "guard", feature = "middleware"))]
-        let request = NavigationRequest::with_from(path.clone(), from);
+        // Build request — used by guards, lifecycle hooks, and middleware
+        let request = NavigationRequest::with_from(path.clone(), from.clone());
 
         // Step 1: Run guards
         #[cfg(feature = "guard")]
@@ -293,53 +337,61 @@ impl GlobalRouter {
             }
         }
 
-        // Step 2: Run before middleware
+        // Step 2: Check if current route allows deactivation (lifecycle)
+        match self.run_lifecycle_can_deactivate(cx) {
+            NavigationAction::Continue => {}
+            NavigationAction::Deny { reason } => {
+                warn_log!(
+                    "Lifecycle can_deactivate blocked leaving '{}': {}",
+                    from,
+                    reason
+                );
+                return NavigationResult::Blocked {
+                    reason,
+                    redirect: None,
+                };
+            }
+            NavigationAction::Redirect { to, .. } => {
+                return self.navigate_with_pipeline(to, cx, NavigateOp::Push, redirect_depth + 1);
+            }
+        }
+
+        // Step 3: Run before middleware
         #[cfg(feature = "middleware")]
         self.run_middleware_before(cx, &request);
 
-        // Step 3: Perform actual navigation
-        #[cfg(feature = "cache")]
-        self.nested_cache.clear();
-
-        // Save previous stack for transition animations
-        #[cfg(feature = "transition")]
-        {
-            self.previous_stack = Some(self.match_stack.clone());
+        // Step 4: Run on_exit lifecycle on current route
+        if let NavigationAction::Deny { reason } = self.run_lifecycle_on_exit(cx) {
+            warn_log!("Lifecycle on_exit blocked leaving '{}': {}", from, reason);
+            return NavigationResult::Blocked {
+                reason,
+                redirect: None,
+            };
         }
 
-        let event = match op {
-            NavigateOp::Push => self.state.push(path),
-            NavigateOp::Replace => self.state.replace(path),
-            NavigateOp::Back => {
-                if let Some(event) = self.state.back() {
-                    event
-                } else {
-                    error_log!("back() returned None after peek succeeded");
-                    return NavigationResult::Error(
-                        crate::error::NavigationError::NavigationFailed {
-                            message: "History back failed unexpectedly".into(),
-                        },
-                    );
-                }
-            }
-            NavigateOp::Forward => {
-                if let Some(event) = self.state.forward() {
-                    event
-                } else {
-                    error_log!("forward() returned None after peek succeeded");
-                    return NavigationResult::Error(
-                        crate::error::NavigationError::NavigationFailed {
-                            message: "History forward failed unexpectedly".into(),
-                        },
-                    );
-                }
-            }
+        // Step 5: Perform actual navigation + resolve match stack
+        let event = match self.perform_navigation(path, op) {
+            Ok(event) => event,
+            Err(result) => return result,
         };
 
-        // Resolve match stack immediately after navigation
-        self.match_stack = resolve_match_stack(self.state.routes(), self.state.current_path());
+        // Step 6: Run on_enter lifecycle on new route
+        match self.run_lifecycle_on_enter(cx, &request) {
+            NavigationAction::Continue => {}
+            NavigationAction::Deny { reason } => {
+                // Navigation already happened — log warning but don't revert
+                warn_log!(
+                    "Lifecycle on_enter denied entry to '{}': {}",
+                    event.to,
+                    reason
+                );
+            }
+            NavigationAction::Redirect { to, .. } => {
+                return self.navigate_with_pipeline(to, cx, NavigateOp::Push, redirect_depth + 1);
+            }
+        }
 
-        // Step 4: Run after middleware
+        // Step 7: Run after middleware
         #[cfg(feature = "middleware")]
         self.run_middleware_after(cx, &request);
 
@@ -349,6 +401,82 @@ impl GlobalRouter {
             self.match_stack.len()
         );
         NavigationResult::Success { path: event.to }
+    }
+
+    // ========================================================================
+    // Navigation execution
+    // ========================================================================
+
+    /// Perform the actual history mutation, cache clear, and match stack resolution.
+    ///
+    /// Returns `Ok(RouteChangeEvent)` on success, `Err(NavigationResult)` if the
+    /// history operation fails unexpectedly.
+    fn perform_navigation(
+        &mut self,
+        path: String,
+        op: NavigateOp,
+    ) -> Result<crate::RouteChangeEvent, NavigationResult> {
+        #[cfg(feature = "cache")]
+        self.nested_cache.clear();
+
+        #[cfg(feature = "transition")]
+        {
+            self.previous_stack = Some(self.match_stack.clone());
+        }
+
+        let event = match op {
+            NavigateOp::Push => self.state.push(path),
+            NavigateOp::Replace => self.state.replace(path),
+            NavigateOp::Back => self.state.back().ok_or_else(|| {
+                error_log!("back() returned None after peek succeeded");
+                NavigationResult::Error(crate::error::NavigationError::NavigationFailed {
+                    message: "History back failed unexpectedly".into(),
+                })
+            })?,
+            NavigateOp::Forward => self.state.forward().ok_or_else(|| {
+                error_log!("forward() returned None after peek succeeded");
+                NavigationResult::Error(crate::error::NavigationError::NavigationFailed {
+                    message: "History forward failed unexpectedly".into(),
+                })
+            })?,
+        };
+
+        self.match_stack = resolve_match_stack(self.state.routes(), self.state.current_path());
+        Ok(event)
+    }
+
+    // ========================================================================
+    // Lifecycle hooks
+    // ========================================================================
+
+    /// Run `can_deactivate` on the current route's lifecycle (if any).
+    fn run_lifecycle_can_deactivate(&self, cx: &App) -> NavigationAction {
+        if let Some(current_route) = self.state.current_route() {
+            if let Some(ref lifecycle) = current_route.lifecycle {
+                return lifecycle.can_deactivate(cx);
+            }
+        }
+        NavigationAction::Continue
+    }
+
+    /// Run `on_exit` on the current route's lifecycle (if any).
+    fn run_lifecycle_on_exit(&self, cx: &App) -> NavigationAction {
+        if let Some(current_route) = self.state.current_route() {
+            if let Some(ref lifecycle) = current_route.lifecycle {
+                return lifecycle.on_exit(cx);
+            }
+        }
+        NavigationAction::Continue
+    }
+
+    /// Run `on_enter` on the new route's lifecycle (if any).
+    fn run_lifecycle_on_enter(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
+        if let Some(leaf) = self.match_stack.leaf() {
+            if let Some(ref lifecycle) = leaf.route.lifecycle {
+                return lifecycle.on_enter(cx, request);
+            }
+        }
+        NavigationAction::Continue
     }
 
     /// Collect and run guards for the target path.
@@ -575,6 +703,20 @@ impl GlobalRouter {
     }
 
     // ========================================================================
+    // Error handlers
+    // ========================================================================
+
+    /// Set custom error handlers for 404 and navigation errors.
+    pub fn set_error_handlers(&mut self, handlers: ErrorHandlers) {
+        self.error_handlers = handlers;
+    }
+
+    /// Get a reference to the current error handlers.
+    pub const fn error_handlers(&self) -> &ErrorHandlers {
+        &self.error_handlers
+    }
+
+    // ========================================================================
     // Component cache
     // ========================================================================
 
@@ -668,6 +810,7 @@ impl Default for GlobalRouter {
             next_transition: None,
             component_cache: HashMap::new(),
             component_cache_order: std::collections::VecDeque::new(),
+            error_handlers: ErrorHandlers::new(),
         }
     }
 }
@@ -935,6 +1078,39 @@ impl Navigator {
             router.replace(descriptor.path, app);
         });
         cx.borrow_mut().refresh_windows();
+    }
+
+    /// Push a new path with associated [`HistoryState`] data.
+    pub fn push_with_state(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+        route: impl IntoRoute,
+        state: HistoryState,
+    ) {
+        let descriptor = route.into_route();
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.push_with_state(descriptor.path, state, app);
+        });
+        cx.borrow_mut().refresh_windows();
+    }
+
+    /// Replace current path with associated [`HistoryState`] data.
+    pub fn replace_with_state(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+        route: impl IntoRoute,
+        state: HistoryState,
+    ) {
+        let descriptor = route.into_route();
+        cx.update_global::<GlobalRouter, _>(|router, cx| {
+            let app: &App = cx.borrow_mut();
+            router.replace_with_state(descriptor.path, state, app);
+        });
+        cx.borrow_mut().refresh_windows();
+    }
+
+    /// Return the current [`HistoryEntry`] (path + optional state).
+    pub fn current_entry(cx: &App) -> HistoryEntry {
+        cx.global::<GlobalRouter>().current_entry().clone()
     }
 
     /// Go back to the previous route.

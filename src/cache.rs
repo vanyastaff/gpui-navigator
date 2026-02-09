@@ -43,7 +43,7 @@ pub struct RouteId {
 
 impl RouteId {
     /// Create a new route ID from a route
-    #[must_use] 
+    #[must_use]
     pub fn from_route(route: &Route) -> Self {
         Self {
             path: route.config.path.clone(),
@@ -93,7 +93,7 @@ impl CacheStats {
     ///
     /// Returns `0.0` if no parent lookups have been performed.
     #[allow(clippy::cast_precision_loss)]
-    #[must_use] 
+    #[must_use]
     pub fn parent_hit_rate(&self) -> f64 {
         let total = self.parent_hits + self.parent_misses;
         if total == 0 {
@@ -105,7 +105,7 @@ impl CacheStats {
 
     /// Return the child-cache hit rate as a value in `0.0..=1.0`.
     #[allow(clippy::cast_precision_loss)]
-    #[must_use] 
+    #[must_use]
     pub fn child_hit_rate(&self) -> f64 {
         let total = self.child_hits + self.child_misses;
         if total == 0 {
@@ -117,7 +117,7 @@ impl CacheStats {
 
     /// Return the combined (parent + child) hit rate as a value in `0.0..=1.0`.
     #[allow(clippy::cast_precision_loss)]
-    #[must_use] 
+    #[must_use]
     pub fn overall_hit_rate(&self) -> f64 {
         let total_hits = self.parent_hits + self.child_hits;
         let total_misses = self.parent_misses + self.child_misses;
@@ -148,7 +148,7 @@ impl RouteCache {
     const DEFAULT_CAPACITY: usize = 1000;
 
     /// Create a cache with the default capacity (1000 entries per sub-cache).
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CAPACITY)
     }
@@ -158,7 +158,7 @@ impl RouteCache {
     /// # Panics
     ///
     /// Panics if `capacity` is zero.
-    #[must_use] 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         let cap = NonZeroUsize::new(capacity).expect("Cache capacity must be non-zero");
         Self {
@@ -210,8 +210,46 @@ impl RouteCache {
             .push(path, ParentRouteCacheEntry { parent_route_id });
     }
 
+    /// Look up the cached child [`RouteParams`] for the given path and outlet name.
+    ///
+    /// Returns `None` on a cache miss. Updates hit/miss stats.
+    pub fn get_child(&mut self, path: &str, outlet_name: Option<&str>) -> Option<RouteParams> {
+        let key = OutletCacheKey {
+            path: path.to_string(),
+            outlet_name: outlet_name.map(String::from),
+        };
+        if let Some(params) = self.child_cache.get(&key) {
+            self.stats.child_hits += 1;
+            trace_log!(
+                "Child cache hit for path: '{}', outlet: {:?}",
+                path,
+                outlet_name
+            );
+            Some(params.clone())
+        } else {
+            self.stats.child_misses += 1;
+            trace_log!(
+                "Child cache miss for path: '{}', outlet: {:?}",
+                path,
+                outlet_name
+            );
+            None
+        }
+    }
+
+    /// Insert a child route params mapping into the cache.
+    pub fn set_child(&mut self, path: String, outlet_name: Option<String>, params: RouteParams) {
+        trace_log!(
+            "Caching child params for path '{}', outlet: {:?}",
+            path,
+            outlet_name
+        );
+        self.child_cache
+            .push(OutletCacheKey { path, outlet_name }, params);
+    }
+
     /// Return a reference to the current cache statistics.
-    #[must_use] 
+    #[must_use]
     pub const fn stats(&self) -> &CacheStats {
         &self.stats
     }
@@ -222,19 +260,19 @@ impl RouteCache {
     }
 
     /// Return the number of entries currently in the parent cache.
-    #[must_use] 
+    #[must_use]
     pub fn parent_cache_size(&self) -> usize {
         self.parent_cache.len()
     }
 
     /// Return the number of entries currently in the child cache.
-    #[must_use] 
+    #[must_use]
     pub fn child_cache_size(&self) -> usize {
         self.child_cache.len()
     }
 
     /// Return the total number of entries across both sub-caches.
-    #[must_use] 
+    #[must_use]
     pub fn total_size(&self) -> usize {
         self.parent_cache_size() + self.child_cache_size()
     }
@@ -316,5 +354,62 @@ mod tests {
         assert_eq!(cache.stats().parent_hits, 2);
         assert_eq!(cache.stats().parent_misses, 3);
         assert!((cache.stats().parent_hit_rate() - 0.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_child_cache_miss() {
+        let mut cache = RouteCache::new();
+        let result = cache.get_child("/dashboard", Some("sidebar"));
+        assert!(result.is_none());
+        assert_eq!(cache.stats().child_misses, 1);
+    }
+
+    #[test]
+    fn test_child_cache_hit() {
+        let mut cache = RouteCache::new();
+        let mut params = RouteParams::default();
+        params.set("id", "42");
+        cache.set_child(
+            "/dashboard".to_string(),
+            Some("sidebar".to_string()),
+            params,
+        );
+
+        let result = cache.get_child("/dashboard", Some("sidebar"));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().get("id").map(String::as_str), Some("42"));
+        assert_eq!(cache.stats().child_hits, 1);
+    }
+
+    #[test]
+    fn test_child_cache_different_outlets() {
+        let mut cache = RouteCache::new();
+        let mut params1 = RouteParams::default();
+        params1.set("view", "list");
+        let mut params2 = RouteParams::default();
+        params2.set("view", "detail");
+
+        cache.set_child("/app".to_string(), Some("main".to_string()), params1);
+        cache.set_child("/app".to_string(), Some("sidebar".to_string()), params2);
+
+        let r1 = cache.get_child("/app", Some("main")).unwrap();
+        assert_eq!(r1.get("view").map(String::as_str), Some("list"));
+
+        let r2 = cache.get_child("/app", Some("sidebar")).unwrap();
+        assert_eq!(r2.get("view").map(String::as_str), Some("detail"));
+
+        assert_eq!(cache.stats().child_hits, 2);
+    }
+
+    #[test]
+    fn test_child_cache_none_outlet() {
+        let mut cache = RouteCache::new();
+        let params = RouteParams::default();
+        cache.set_child("/page".to_string(), None, params);
+
+        assert!(cache.get_child("/page", None).is_some());
+        assert!(cache.get_child("/page", Some("named")).is_none());
+        assert_eq!(cache.stats().child_hits, 1);
+        assert_eq!(cache.stats().child_misses, 1);
     }
 }

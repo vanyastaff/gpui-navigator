@@ -138,6 +138,24 @@ impl Default for RouterOutlet {
 impl RouterOutlet {
     /// Render a named outlet (separate from the enter/exit depth tracking).
     fn render_named(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
+        let name = self.name.as_deref().unwrap_or("");
+
+        // Try child cache first (mutable borrow, then drop)
+        #[cfg(feature = "cache")]
+        let cached = {
+            let has_router = cx.try_global::<GlobalRouter>().is_some();
+            if has_router {
+                let current_path = cx.global::<GlobalRouter>().current_path().to_string();
+                cx.update_global::<GlobalRouter, _>(|router, _| {
+                    router
+                        .nested_cache_mut()
+                        .get_child(&current_path, Some(name))
+                })
+            } else {
+                None
+            }
+        };
+
         let resolved = {
             let router = cx.try_global::<GlobalRouter>();
 
@@ -148,25 +166,101 @@ impl RouterOutlet {
 
             let current_path = router.current_path().to_string();
             let stack = router.match_stack();
-            let name = self.name.as_deref().unwrap_or("");
             let depth = current_outlet_depth();
 
             let resolved = resolve_named_outlet(stack, depth, name, &current_path);
             if let Some((route, params)) = resolved {
-                (route, params)
+                Some((route, params, current_path))
             } else {
                 trace_log!("Named outlet '{}': no matching route", name);
-                return div().into_any_element();
+                None
             }
         };
 
-        let (route, params) = resolved;
+        let Some((route, params, current_path)) = resolved else {
+            return div().into_any_element();
+        };
+
+        // Store in child cache on miss (after immutable borrow is released)
+        #[cfg(feature = "cache")]
+        if cached.is_none() {
+            cx.update_global::<GlobalRouter, _>(|r, _| {
+                r.nested_cache_mut().set_child(
+                    current_path,
+                    Some(name.to_string()),
+                    params.clone(),
+                );
+            });
+        }
 
         route.build(window, cx, &params).unwrap_or_else(|| {
             div()
                 .child(format!("Route '{}' has no builder", route.config.path))
                 .into_any_element()
         })
+    }
+
+    /// Apply transition animation, managing animation state across frames.
+    ///
+    /// Returns the element wrapped in a transition animation if a path change
+    /// occurred or an animation is still in progress, otherwise returns the
+    /// element with `last_path` updated.
+    #[cfg(feature = "transition")]
+    fn apply_transition(
+        &mut self,
+        element: AnyElement,
+        transition: &Transition,
+        current_path: String,
+        my_depth: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let path_changed = current_path != self.last_path && !self.last_path.is_empty();
+
+        if path_changed {
+            self.animation_counter = self.animation_counter.wrapping_add(1);
+            self.last_path = current_path;
+
+            if !transition.is_none() {
+                debug_log!(
+                    "RouterOutlet depth {}: starting {:?} (counter={})",
+                    my_depth,
+                    transition,
+                    self.animation_counter
+                );
+                self.active_transition = Some(transition.clone());
+                self.transition_start = Some(std::time::Instant::now());
+            }
+
+            let exit_element = build_exit_element(my_depth, window, cx);
+            return render_with_transition(
+                element,
+                exit_element,
+                transition,
+                self.name.as_ref(),
+                self.animation_counter,
+            );
+        }
+
+        // Animation still in progress — keep returning the wrapper
+        if let (Some(active), Some(start)) = (&self.active_transition, self.transition_start) {
+            if start.elapsed() < active.duration() {
+                let exit_element = build_exit_element(my_depth, window, cx);
+                return render_with_transition(
+                    element,
+                    exit_element,
+                    active,
+                    self.name.as_ref(),
+                    self.animation_counter,
+                );
+            }
+            // Animation finished — clear state
+            self.active_transition = None;
+            self.transition_start = None;
+        }
+
+        self.last_path = current_path;
+        element
     }
 }
 
@@ -219,6 +313,17 @@ impl Render for RouterOutlet {
             d
         };
 
+        // Take the one-shot transition override before the immutable borrow.
+        // Split into two statements to avoid overlapping borrows on `cx`.
+        #[cfg(feature = "transition")]
+        let has_router = cx.try_global::<GlobalRouter>().is_some();
+        #[cfg(feature = "transition")]
+        let global_override: Option<Transition> = if has_router {
+            cx.update_global::<GlobalRouter, _>(|router, _| router.take_next_transition())
+        } else {
+            None
+        };
+
         // Extract data from router, then drop the borrow
         let resolved = {
             let router = cx.try_global::<GlobalRouter>();
@@ -247,8 +352,10 @@ impl Render for RouterOutlet {
                 entry.params.len()
             );
 
+            // Priority: GlobalRouter override > TransitionConfig override_next > route default
             #[cfg(feature = "transition")]
-            let transition = Some(entry.route.transition.default.clone());
+            let transition =
+                Some(global_override.unwrap_or_else(|| entry.route.transition.active().clone()));
             #[cfg(not(feature = "transition"))]
             let transition = None::<()>;
 
@@ -272,65 +379,10 @@ impl Render for RouterOutlet {
                 .into_any_element()
         });
 
-        // Apply transition animation if path changed, and keep applying
-        // it on every render frame until the animation duration expires.
-        // GPUI's `with_animation` requires the wrapper on every render.
+        // Apply transition animation if applicable
         #[cfg(feature = "transition")]
-        {
-            if let Some(transition) = _transition {
-                let path_changed = current_path != self.last_path && !self.last_path.is_empty();
-
-                if path_changed {
-                    // New navigation — start animation
-                    self.animation_counter = self.animation_counter.wrapping_add(1);
-                    self.last_path = current_path;
-
-                    if !transition.is_none() {
-                        debug_log!(
-                            "RouterOutlet depth {}: starting {:?} (counter={})",
-                            my_depth,
-                            transition,
-                            self.animation_counter
-                        );
-                        self.active_transition = Some(transition.clone());
-                        self.transition_start = Some(std::time::Instant::now());
-                    }
-
-                    // Build exit content from previous match stack
-                    let exit_element = build_exit_element(my_depth, window, cx);
-
-                    return render_with_transition(
-                        element,
-                        exit_element,
-                        &transition,
-                        self.name.as_ref(),
-                        self.animation_counter,
-                    );
-                }
-
-                // Animation still in progress — keep returning the wrapper
-                if let (Some(active), Some(start)) =
-                    (&self.active_transition, self.transition_start)
-                {
-                    if start.elapsed() < active.duration() {
-                        // Rebuild exit content on every frame too
-                        let exit_element = build_exit_element(my_depth, window, cx);
-
-                        return render_with_transition(
-                            element,
-                            exit_element,
-                            active,
-                            self.name.as_ref(),
-                            self.animation_counter,
-                        );
-                    }
-                    // Animation finished — clear state
-                    self.active_transition = None;
-                    self.transition_start = None;
-                }
-
-                self.last_path = current_path;
-            }
+        if let Some(transition) = _transition {
+            return self.apply_transition(element, &transition, current_path, my_depth, window, cx);
         }
 
         element
@@ -542,6 +594,22 @@ fn render_with_transition(
 pub fn render_router_outlet(window: &mut Window, cx: &mut App, name: Option<&str>) -> AnyElement {
     // Named outlet: resolve separately (no enter/exit)
     if let Some(name) = name {
+        // Try child cache first
+        #[cfg(feature = "cache")]
+        let cached = {
+            let has_router = cx.try_global::<GlobalRouter>().is_some();
+            if has_router {
+                let current_path = cx.global::<GlobalRouter>().current_path().to_string();
+                cx.update_global::<GlobalRouter, _>(|router, _| {
+                    router
+                        .nested_cache_mut()
+                        .get_child(&current_path, Some(name))
+                })
+            } else {
+                None
+            }
+        };
+
         let resolved = {
             let router = cx.try_global::<GlobalRouter>();
 
@@ -554,14 +622,29 @@ pub fn render_router_outlet(window: &mut Window, cx: &mut App, name: Option<&str
             let depth = current_outlet_depth();
 
             if let Some((route, params)) = resolve_named_outlet(stack, depth, name, &current_path) {
-                (route, params)
+                Some((route, params, current_path))
             } else {
                 trace_log!("render_router_outlet: named outlet '{}' not found", name);
-                return div().into_any_element();
+                None
             }
         };
 
-        let (route, params) = resolved;
+        let Some((route, params, current_path)) = resolved else {
+            return div().into_any_element();
+        };
+
+        // Store in child cache on miss (after immutable borrow is released)
+        #[cfg(feature = "cache")]
+        if cached.is_none() {
+            cx.update_global::<GlobalRouter, _>(|r, _| {
+                r.nested_cache_mut().set_child(
+                    current_path,
+                    Some(name.to_string()),
+                    params.clone(),
+                );
+            });
+        }
+
         return route
             .build(window, cx, &params)
             .unwrap_or_else(|| div().into_any_element());
@@ -650,6 +733,10 @@ pub fn router_view<V>(window: &mut Window, cx: &mut Context<'_, V>) -> AnyElemen
 
         let Some(root_entry) = stack.root() else {
             let current_path = router.current_path().to_string();
+            // Try custom not-found handler first, fall back to built-in page
+            if let Some(element) = router.error_handlers().render_not_found(cx, &current_path) {
+                return element;
+            }
             return default_not_found_page(&current_path).into_any_element();
         };
 

@@ -163,6 +163,7 @@ pub use error::{ErrorHandler, ErrorHandlers, NavigationError, NavigationResult, 
 pub use guards::{
     guard_fn, AuthGuard, GuardBuilder, Guards, NotGuard, PermissionGuard, RoleGuard, RouteGuard,
 };
+pub use history::{History, HistoryEntry, HistoryState};
 pub use lifecycle::{NavigationAction, RouteLifecycle};
 #[cfg(feature = "middleware")]
 pub use middleware::{middleware_fn, RouteMiddleware};
