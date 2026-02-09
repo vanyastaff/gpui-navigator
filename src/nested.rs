@@ -41,6 +41,15 @@ use crate::{trace_log, warn_log, RouteParams};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+/// Strip leading and trailing slashes from a route path segment.
+///
+/// This pattern appears throughout the codebase. Centralizing it ensures
+/// consistency and makes call sites more readable.
+#[inline]
+pub(crate) fn trim_slashes(path: &str) -> &str {
+    path.trim_start_matches('/').trim_end_matches('/')
+}
+
 /// Maximum recursion depth for nested routes (T031 - User Story 3)
 ///
 /// Prevents infinite loops and stack overflow in deeply nested route hierarchies.
@@ -68,7 +77,7 @@ pub type ResolvedChildRoute = (Arc<Route>, RouteParams);
 /// assert_eq!(normalize_path("/"), "/");
 /// assert_eq!(normalize_path(""), "/");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn normalize_path(path: &'_ str) -> Cow<'_, str> {
     // Handle empty path -> "/"
     if path.is_empty() {
@@ -111,7 +120,7 @@ pub fn normalize_path(path: &'_ str) -> Cow<'_, str> {
 /// assert_eq!(extract_param_name(":id<i32>"), "id");
 /// assert_eq!(extract_param_name(":user_id<uuid>"), "user_id");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
     let without_colon = segment.trim_start_matches(':');
 
@@ -126,7 +135,7 @@ pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
 ///
 /// Public wrapper that starts recursion depth tracking at 0.
 /// Use this function for all external calls.
-#[must_use] 
+#[must_use]
 pub fn resolve_child_route(
     parent_route: &Arc<Route>,
     current_path: &str,
@@ -216,47 +225,30 @@ fn resolve_child_route_impl(
         return None;
     }
 
-    // Extract parent path from the route config
-    let parent_path = &parent_route.config.path;
+    // Strip slashes for comparison — avoids repeated normalize_path allocations
+    let parent_trimmed = trim_slashes(&parent_route.config.path);
+    let current_trimmed = trim_slashes(normalized_current);
 
-    // Normalize paths for comparison using helper function
-    let parent_path_normalized = normalize_path(parent_path);
-    let current_path_normalized = normalize_path(normalized_current);
-
-    // Check if current path starts with parent path (BUG-001: fixed double normalization)
-    let parent_without_slash = parent_path_normalized.trim_start_matches('/');
-    let current_without_slash = current_path_normalized.trim_start_matches('/');
-
-    // Special handling for parameter routes - they don't have static prefixes to strip
-    let remaining = if parent_without_slash.starts_with(':') {
-        // Parent is a parameter route - remaining path is the current path itself
-        // (parameter routes don't have prefixes to strip)
-        current_without_slash.to_string()
+    // Extract the remaining path after stripping the parent prefix
+    let remaining = if parent_trimmed.starts_with(':') {
+        // Parameter route — no static prefix to strip
+        current_trimmed
+    } else if parent_trimmed.is_empty() {
+        // Root parent — entire current path is the remainder
+        current_trimmed
+    } else if let Some(rest) = current_trimmed.strip_prefix(parent_trimmed) {
+        // Static parent — strip its prefix and any leading slash
+        rest.trim_start_matches('/')
     } else {
-        // Parent is a static route - check prefix and extract remaining
-        if !current_without_slash.starts_with(parent_without_slash) {
-            return None;
-        }
-
-        if parent_without_slash.is_empty() {
-            // Parent is root ("/"), remaining is the full current path
-            current_without_slash.to_string()
-        } else {
-            // Parent has a path, strip it from current path
-            current_without_slash
-                .strip_prefix(parent_without_slash)
-                .unwrap_or("")
-                .trim_start_matches('/')
-                .to_string()
-        }
+        // Current path doesn't start with parent — no match
+        return None;
     };
 
     trace_log!(
-        "  normalized: parent='{}', current='{}', remaining='{}', parent_without_slash='{}'",
-        parent_path_normalized,
-        current_path_normalized,
-        remaining,
-        parent_without_slash
+        "  parent_trimmed='{}', current_trimmed='{}', remaining='{}'",
+        parent_trimmed,
+        current_trimmed,
+        remaining
     );
 
     if remaining.is_empty() {
@@ -418,7 +410,7 @@ fn find_index_route(children: &[Arc<Route>], params: RouteParams) -> Option<Reso
 /// let full_path = build_child_path("/dashboard", "settings");
 /// assert_eq!(full_path, "/dashboard/settings");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn build_child_path<'a>(parent_path: &'a str, child_path: &'a str) -> Cow<'a, str> {
     // CRITICAL: Don't normalize empty child paths - they represent index routes
     // Normalizing "" to "/" would make the child have the same path as parent, causing infinite recursion

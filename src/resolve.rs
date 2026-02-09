@@ -42,7 +42,7 @@
 //! - Each outlet sets depth = `parent_depth` + 1 and renders `match_stack[depth]`
 //! - Works for both functional (`render_router_outlet`) and entity (`RouterOutlet`) APIs
 
-use crate::nested::normalize_path;
+use crate::nested::{normalize_path, trim_slashes};
 use crate::route::Route;
 use crate::{debug_log, trace_log, warn_log, RouteParams};
 use std::cell::Cell;
@@ -150,7 +150,7 @@ pub fn reset_outlet_depth() {
 }
 
 /// Get current outlet depth without modifying state. Used by named outlets.
-#[must_use] 
+#[must_use]
 pub fn current_outlet_depth() -> usize {
     PARENT_DEPTH.with(|p| p.get().map_or(0, |d| d + 1))
 }
@@ -188,7 +188,7 @@ pub struct MatchStack {
 
 impl MatchStack {
     /// Create an empty match stack.
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -196,37 +196,37 @@ impl MatchStack {
     }
 
     /// Return the entry at `depth`, or `None` if out of range.
-    #[must_use] 
+    #[must_use]
     pub fn at_depth(&self, depth: usize) -> Option<&MatchEntry> {
         self.entries.get(depth)
     }
 
     /// Return the root (depth 0) entry, or `None` if the stack is empty.
-    #[must_use] 
+    #[must_use]
     pub fn root(&self) -> Option<&MatchEntry> {
         self.entries.first()
     }
 
     /// Return the leaf (deepest) entry, or `None` if the stack is empty.
-    #[must_use] 
+    #[must_use]
     pub fn leaf(&self) -> Option<&MatchEntry> {
         self.entries.last()
     }
 
     /// Return the total number of matched levels in the stack.
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Return `true` if no routes matched the path.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Return the maximum depth (0-indexed), or `None` if the stack is empty.
-    #[must_use] 
+    #[must_use]
     pub fn max_depth(&self) -> Option<usize> {
         if self.entries.is_empty() {
             None
@@ -236,26 +236,26 @@ impl MatchStack {
     }
 
     /// Return all entries as a slice (ordered root → leaf).
-    #[must_use] 
+    #[must_use]
     pub fn entries(&self) -> &[MatchEntry] {
         &self.entries
     }
 
     /// Return the accumulated params at the deepest matched level.
-    #[must_use] 
+    #[must_use]
     pub fn params(&self) -> RouteParams {
         self.leaf().map(|e| e.params.clone()).unwrap_or_default()
     }
 
     /// Return `true` if the stack contains an entry at the given `depth`.
-    #[must_use] 
+    #[must_use]
     pub fn has_depth(&self, depth: usize) -> bool {
         depth < self.entries.len()
     }
 
     /// Return a multi-line human-readable representation (debug builds only).
     #[cfg(debug_assertions)]
-    #[must_use] 
+    #[must_use]
     pub fn debug_string(&self) -> String {
         if self.entries.is_empty() {
             return "MatchStack: (empty)".to_string();
@@ -314,10 +314,10 @@ const MAX_DEPTH: usize = 16;
 /// let stack = resolve_match_stack(&routes, "/dashboard/settings/profile");
 /// assert_eq!(stack.len(), 4); // root, dashboard, settings, profile
 /// ```
-#[must_use] 
+#[must_use]
 pub fn resolve_match_stack(routes: &[Arc<Route>], path: &str) -> MatchStack {
     let normalized = normalize_path(path);
-    let path_str = normalized.trim_start_matches('/').trim_end_matches('/');
+    let path_str = trim_slashes(&normalized);
 
     let segments: Vec<&str> = if path_str.is_empty() {
         vec![]
@@ -369,17 +369,7 @@ fn resolve_recursive(
     }
 
     for route in routes {
-        let route_path = route
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
-
-        let route_segments: Vec<&str> = if route_path.is_empty() {
-            vec![]
-        } else {
-            route_path.split('/').collect()
-        };
+        let route_path = trim_slashes(&route.config.path);
 
         trace_log!(
             "Trying route '{}' at depth {} ({} remaining segments)",
@@ -391,22 +381,20 @@ fn resolve_recursive(
         // === Try to match this route's segments ===
 
         // Case 1: Route has an empty path (index/layout route)
-        if route_segments.is_empty() {
-            let params = inherited_params.clone();
-
+        if route_path.is_empty() {
             // Empty-path route with children = layout route (matches anything)
             // Empty-path route without children = index route (matches only when no segments left)
             if remaining.is_empty() {
                 // No segments left → this is an index/layout match
                 stack.entries.push(MatchEntry {
                     route: Arc::clone(route),
-                    params: params.clone(),
+                    params: inherited_params.clone(),
                     depth,
                 });
 
                 // If layout with children, try to resolve index child
                 if !route.children.is_empty() {
-                    try_index_route(&route.children, depth + 1, &params, stack);
+                    try_index_route(&route.children, depth + 1, inherited_params, stack);
                 }
                 return true;
             }
@@ -415,11 +403,17 @@ fn resolve_recursive(
             if !route.children.is_empty() {
                 stack.entries.push(MatchEntry {
                     route: Arc::clone(route),
-                    params: params.clone(),
+                    params: inherited_params.clone(),
                     depth,
                 });
 
-                if resolve_recursive(&route.children, remaining, depth + 1, &params, stack) {
+                if resolve_recursive(
+                    &route.children,
+                    remaining,
+                    depth + 1,
+                    inherited_params,
+                    stack,
+                ) {
                     return true;
                 }
 
@@ -429,6 +423,8 @@ fn resolve_recursive(
 
             continue;
         }
+
+        let route_segments: Vec<&str> = route_path.split('/').collect();
 
         // Case 2: Route has path segments → try to match against remaining path
         if route_segments.len() > remaining.len() {
@@ -516,11 +512,7 @@ fn try_index_route(
 ) {
     // Priority 1: Empty path child
     for child in children {
-        let child_path = child
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
+        let child_path = trim_slashes(&child.config.path);
 
         if child_path.is_empty() {
             trace_log!("Index route (empty path) resolved at depth {}", depth);
@@ -540,11 +532,7 @@ fn try_index_route(
 
     // Priority 2: "index" named child
     for child in children {
-        let child_path = child
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
+        let child_path = trim_slashes(&child.config.path);
 
         if child_path == "index" {
             trace_log!("Index route ('index') resolved at depth {}", depth);
@@ -575,7 +563,7 @@ fn try_index_route(
 /// on demand by the named outlet during rendering.
 ///
 /// Returns the first matching child from the named outlet's children.
-#[must_use] 
+#[must_use]
 pub fn resolve_named_outlet(
     match_stack: &MatchStack,
     outlet_depth: usize,
@@ -595,7 +583,7 @@ pub fn resolve_named_outlet(
 
     // For named outlets, resolve against remaining path segments
     let normalized = normalize_path(current_path);
-    let path_str = normalized.trim_start_matches('/').trim_end_matches('/');
+    let path_str = trim_slashes(&normalized);
     let all_segments: Vec<&str> = if path_str.is_empty() {
         vec![]
     } else {
@@ -610,11 +598,7 @@ pub fn resolve_named_outlet(
     let params = parent_entry.params.clone();
 
     for child in named_children {
-        let child_path = child
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
+        let child_path = trim_slashes(&child.config.path);
 
         if child_path.is_empty() {
             // Index route for named outlet
@@ -626,24 +610,21 @@ pub fn resolve_named_outlet(
         }
 
         // Simple single-segment match (named outlets are typically flat)
+        #[allow(clippy::redundant_clone)] // params is reused across loop iterations
         if child_path == remaining[0] || child_path.starts_with(':') {
-            #[allow(clippy::redundant_clone)]
-            let mut child_params = params.clone();
             if child_path.starts_with(':') {
                 let name = child_path.trim_start_matches(':');
+                let mut child_params = params.clone();
                 child_params.insert(name.to_string(), remaining[0].to_string());
+                return Some((Arc::clone(child), child_params));
             }
-            return Some((Arc::clone(child), child_params));
+            return Some((Arc::clone(child), params.clone()));
         }
     }
 
     // Default: first child with empty path (if any)
     for child in named_children {
-        let p = child
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
+        let p = trim_slashes(&child.config.path);
         if p.is_empty() {
             return Some((Arc::clone(child), params));
         }
@@ -656,12 +637,7 @@ pub fn resolve_named_outlet(
 fn count_consumed_segments(stack: &MatchStack, up_to_depth: usize) -> usize {
     let mut count = 0;
     for entry in stack.entries().iter().take(up_to_depth + 1) {
-        let path = entry
-            .route
-            .config
-            .path
-            .trim_start_matches('/')
-            .trim_end_matches('/');
+        let path = trim_slashes(&entry.route.config.path);
         if !path.is_empty() {
             count += path.split('/').count();
         }

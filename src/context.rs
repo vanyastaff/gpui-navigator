@@ -32,6 +32,7 @@ use crate::cache::{CacheStats, RouteCache};
 use crate::error::NavigationResult;
 #[cfg(feature = "guard")]
 use crate::lifecycle::NavigationAction;
+use crate::nested::trim_slashes;
 use crate::resolve::{resolve_match_stack, MatchStack};
 use crate::route::NamedRouteRegistry;
 #[cfg(feature = "transition")]
@@ -46,6 +47,9 @@ use std::sync::Arc;
 
 /// Maximum redirect depth to prevent infinite redirect loops.
 const MAX_REDIRECT_DEPTH: usize = 5;
+
+/// Maximum number of cached component views before FIFO eviction kicks in.
+const MAX_COMPONENT_CACHE: usize = 128;
 
 // ============================================================================
 // NavigationRequest
@@ -139,7 +143,12 @@ pub struct GlobalRouter {
     /// Unlike `window.use_keyed_state()` which is frame-scoped, this cache
     /// persists across navigations so that component state survives when the
     /// user navigates away and back.
+    ///
+    /// Capped at `MAX_COMPONENT_CACHE` entries. Oldest entries are evicted
+    /// when the limit is reached (FIFO order via `VecDeque` of keys).
     component_cache: HashMap<String, AnyView>,
+    /// Insertion-order tracking for FIFO eviction of `component_cache`.
+    component_cache_order: std::collections::VecDeque<String>,
 }
 
 impl GlobalRouter {
@@ -249,6 +258,9 @@ impl GlobalRouter {
 
         let from = self.current_path().to_string();
         info_log!("Navigation {:?}: '{}' → '{}'", op, from, path);
+
+        // Build request only when guards or middleware need it
+        #[cfg(any(feature = "guard", feature = "middleware"))]
         let request = NavigationRequest::with_from(path.clone(), from);
 
         // Step 1: Run guards
@@ -346,7 +358,7 @@ impl GlobalRouter {
     /// child routes (e.g. an `AuthGuard` on `/dashboard` also guards `/dashboard/settings`).
     #[cfg(feature = "guard")]
     fn run_guards(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
-        let path = request.to.trim_start_matches('/').trim_end_matches('/');
+        let path = trim_slashes(&request.to);
         let mut guards: Vec<(&dyn crate::guards::RouteGuard, i32)> = Vec::new();
 
         // Collect guards from matching routes (including ancestor routes)
@@ -400,7 +412,7 @@ impl GlobalRouter {
     /// Run `before_navigation` on all middleware attached to matching routes.
     #[cfg(feature = "middleware")]
     fn run_middleware_before(&self, cx: &App, request: &NavigationRequest) {
-        let path = request.to.trim_start_matches('/').trim_end_matches('/');
+        let path = trim_slashes(&request.to);
         let mut middleware: Vec<(&dyn crate::middleware::RouteMiddleware, i32)> = Vec::new();
 
         for route in self.state.routes() {
@@ -428,7 +440,7 @@ impl GlobalRouter {
     /// Run `after_navigation` on all middleware attached to matching routes.
     #[cfg(feature = "middleware")]
     fn run_middleware_after(&self, cx: &App, request: &NavigationRequest) {
-        let path = request.to.trim_start_matches('/').trim_end_matches('/');
+        let path = trim_slashes(&request.to);
         let mut middleware: Vec<(&dyn crate::middleware::RouteMiddleware, i32)> = Vec::new();
 
         for route in self.state.routes() {
@@ -572,8 +584,19 @@ impl GlobalRouter {
         self.component_cache.get(key)
     }
 
-    /// Store a component view in the cache.
+    /// Store a component view in the cache, evicting the oldest entry if full.
     pub fn cache_component(&mut self, key: String, view: AnyView) {
+        if !self.component_cache.contains_key(&key) {
+            // Evict oldest entries until we are under the limit
+            while self.component_cache.len() >= MAX_COMPONENT_CACHE {
+                if let Some(oldest_key) = self.component_cache_order.pop_front() {
+                    self.component_cache.remove(&oldest_key);
+                } else {
+                    break;
+                }
+            }
+            self.component_cache_order.push_back(key.clone());
+        }
         self.component_cache.insert(key, view);
     }
 
@@ -644,6 +667,7 @@ impl Default for GlobalRouter {
             #[cfg(feature = "transition")]
             next_transition: None,
             component_cache: HashMap::new(),
+            component_cache_order: std::collections::VecDeque::new(),
         }
     }
 }
@@ -666,27 +690,18 @@ fn walk_matching_routes<'a>(
     accumulated: &str,
     visitor: &mut dyn FnMut(&'a Route, &str),
 ) {
-    let route_path = route
-        .config
-        .path
-        .trim_start_matches('/')
-        .trim_end_matches('/');
+    let route_path = trim_slashes(&route.config.path);
 
-    let full = if accumulated.is_empty() {
-        route_path.to_string()
+    // Avoid allocations when possible by reusing the existing string
+    let full: std::borrow::Cow<'_, str> = if accumulated.is_empty() {
+        std::borrow::Cow::Borrowed(route_path)
     } else if route_path.is_empty() {
-        accumulated.to_string()
+        std::borrow::Cow::Borrowed(accumulated)
     } else {
-        format!("{accumulated}/{route_path}")
+        std::borrow::Cow::Owned(format!("{accumulated}/{route_path}"))
     };
 
-    let matches = if full.is_empty() {
-        true
-    } else {
-        path_matches_prefix(target_path, &full)
-    };
-
-    if !matches {
+    if !full.is_empty() && !path_matches_prefix(target_path, &full) {
         return;
     }
 
@@ -699,22 +714,23 @@ fn walk_matching_routes<'a>(
 
 /// Check if `path` matches `prefix` as a route prefix (supports `:param` segments).
 ///
+/// Uses iterators instead of collecting into `Vec`s to avoid allocation.
+///
 /// Examples:
 /// - `path_matches_prefix("dashboard/settings", "dashboard")` → true
 /// - `path_matches_prefix("dashboard", "dashboard")` → true
 /// - `path_matches_prefix("users/123", "users/:id")` → true
 /// - `path_matches_prefix("other", "dashboard")` → false
 fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let prefix_segs: Vec<&str> = prefix.split('/').filter(|s| !s.is_empty()).collect();
+    let mut path_segs = path.split('/').filter(|s| !s.is_empty());
+    let prefix_segs = prefix.split('/').filter(|s| !s.is_empty());
 
-    if path_segs.len() < prefix_segs.len() {
-        return false;
-    }
-
-    for (ps, pfs) in path_segs.iter().zip(prefix_segs.iter()) {
+    for pfs in prefix_segs {
+        let Some(ps) = path_segs.next() else {
+            // Path exhausted before prefix — not a prefix match
+            return false;
+        };
         if pfs.starts_with(':') {
-            // Parameter segment matches anything
             continue;
         }
         if ps != pfs {
