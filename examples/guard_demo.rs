@@ -11,8 +11,8 @@ use gpui::{
     MouseButton, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_navigator::{
-    guard_fn, init_router, AuthGuard, NavigationAction, Navigator, NotGuard, PermissionGuard,
-    RoleGuard, Route, RouteParams, RouterOutlet, Transition,
+    guard_fn, init_router, AuthGuard, NavigationAction, Navigator, PermissionGuard, RoleGuard,
+    Route, RouteParams, RouterOutlet, Transition,
 };
 
 // ============================================================================
@@ -78,14 +78,17 @@ fn setup_routes(cx: &mut App) {
                 .transition(Transition::fade(200)),
         );
 
-        // Login: only accessible when NOT authenticated
+        // Login: only accessible when NOT authenticated (guests only)
         router.add_route(
             Route::new("/login", |_, cx, _| login_page(cx).into_any_element())
                 .name("login")
-                .guard(NotGuard::new(AuthGuard::new(
-                    |cx| cx.global::<AppState>().is_authenticated,
-                    "/login",
-                )))
+                .guard(guard_fn(|cx, _req| {
+                    if cx.global::<AppState>().is_authenticated {
+                        NavigationAction::redirect("/dashboard")
+                    } else {
+                        NavigationAction::Continue
+                    }
+                }))
                 .transition(Transition::fade(200)),
         );
 
