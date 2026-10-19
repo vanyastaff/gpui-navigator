@@ -304,7 +304,7 @@ impl RouterState {
 
     /// Return `true` if [`forward`](Self::forward) would succeed.
     #[must_use]
-    pub fn can_go_forward(&self) -> bool {
+    pub const fn can_go_forward(&self) -> bool {
         self.history.can_go_forward()
     }
 

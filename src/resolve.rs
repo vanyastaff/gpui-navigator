@@ -215,19 +215,19 @@ impl MatchStack {
 
     /// Return the total number of matched levels in the stack.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Return `true` if no routes matched the path.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Return the maximum depth (0-indexed), or `None` if the stack is empty.
     #[must_use]
-    pub fn max_depth(&self) -> Option<usize> {
+    pub const fn max_depth(&self) -> Option<usize> {
         if self.entries.is_empty() {
             None
         } else {
@@ -249,7 +249,7 @@ impl MatchStack {
 
     /// Return `true` if the stack contains an entry at the given `depth`.
     #[must_use]
-    pub fn has_depth(&self, depth: usize) -> bool {
+    pub const fn has_depth(&self, depth: usize) -> bool {
         depth < self.entries.len()
     }
 

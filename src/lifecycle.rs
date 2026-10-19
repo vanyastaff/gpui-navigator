@@ -115,7 +115,7 @@ impl NavigationAction {
 
     /// Get the redirect path, if this is a redirect action.
     #[must_use]
-    pub fn redirect_path(&self) -> Option<&str> {
+    pub const fn redirect_path(&self) -> Option<&str> {
         match self {
             Self::Redirect { to, .. } => Some(to.as_str()),
             _ => None,

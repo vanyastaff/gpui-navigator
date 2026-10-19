@@ -253,7 +253,7 @@ impl History {
 
     /// Return `true` if [`forward`](Self::forward) would succeed.
     #[must_use]
-    pub fn can_go_forward(&self) -> bool {
+    pub const fn can_go_forward(&self) -> bool {
         self.current < self.entries.len() - 1
     }
 
@@ -286,13 +286,13 @@ impl History {
 
     /// Return the total number of entries in the stack.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if history is empty (should never be true in practice)
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
