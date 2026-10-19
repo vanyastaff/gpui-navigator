@@ -39,11 +39,12 @@ proptest! {
         params.insert("post", post.clone());
         params.insert("rest", rest.join("/"));
 
+        let joined = rest.join("/");
         let url = registry.url_for("post", &params).unwrap();
         let matched = RouteParams::from_path(&url, "/users/:user/posts/:post/*rest");
         prop_assert_eq!(matched.get("user"), Some(&user));
         prop_assert_eq!(matched.get("post"), Some(&post));
-        prop_assert_eq!(matched.get("rest"), Some(&rest.join("/")));
+        prop_assert_eq!(matched.get("rest"), Some(&joined));
     }
 
     #[test]
