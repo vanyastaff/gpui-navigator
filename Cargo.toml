@@ -1,6 +1,6 @@
 [package]
 name = "gpui-navigator"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Navigator for GPUI with transitions, nested routing, guards, and middleware"
@@ -64,9 +64,13 @@ cache = ["dep:lru"]
 # Logging backend - choose one (mutually exclusive)
 log = ["dep:log"]
 tracing = ["dep:tracing"]
+# Enables the selected backend's `test-support` (TestAppContext, #[gpui::test]).
+# Turned on automatically for this crate's own tests via the self dev-dependency below.
+test-support = ["gpui?/test-support", "gpui_pre?/test-support", "gpui_fast?/test-support"]
 
 [dev-dependencies]
-gpui = { version = "0.2", features = ["test-support"] }
+# Self-dependency so `cargo test` enables `test-support` on whichever backend is selected.
+gpui-navigator = { path = ".", default-features = false, features = ["test-support"] }
 env_logger = "0.11"
 tokio = { version = "1", features = ["rt", "macros"] }
 

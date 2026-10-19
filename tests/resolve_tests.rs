@@ -3,6 +3,16 @@
 //! Standalone test crate to avoid compiler stack overflow from deep generic
 //! expansion of `Route::new()` when compiled with all other tests.
 
+// Alias the selected GPUI backend to `gpui`, as the library does.
+#[cfg(all(
+    feature = "gpui-fast",
+    not(feature = "gpui-02"),
+    not(feature = "gpui-pre")
+))]
+extern crate gpui_fast as gpui;
+#[cfg(all(feature = "gpui-pre", not(feature = "gpui-02")))]
+extern crate gpui_pre as gpui;
+
 use gpui::{div, AnyElement, App, IntoElement, ParentElement, Window};
 use gpui_navigator::resolve::*;
 use gpui_navigator::route::Route;
