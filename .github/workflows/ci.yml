@@ -214,9 +214,12 @@ jobs:
 
   semver:
     name: Semver check
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Linux dependencies
         run: |
@@ -231,8 +234,32 @@ jobs:
             libvulkan-dev \
             libwayland-dev
 
-      - name: Check semver compatibility with the last release
-        uses: obi1kenobi/cargo-semver-checks-action@v2
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      # cargo-semver-checks builds rustdoc in a fresh workspace that ignores
+      # Cargo.lock, and fresh resolutions of gpui's dependency tree can fail
+      # to build. Build both rustdoc JSON files with the lockfile instead.
+      - name: Build rustdoc JSON for this PR
+        run: cargo +nightly rustdoc --locked --lib -- -Zunstable-options --output-format json
+
+      - name: Build rustdoc JSON for the base branch
+        run: |
+          git worktree add ../baseline ${{ github.event.pull_request.base.sha }}
+          cd ../baseline
+          CARGO_TARGET_DIR=${{ github.workspace }}/target/baseline \
+            cargo +nightly rustdoc --locked --lib -- -Zunstable-options --output-format json
+
+      - name: Check semver compatibility with the base branch
+        run: |
+          cargo semver-checks \
+            --baseline-rustdoc target/baseline/doc/gpui_navigator.json \
+            --current-rustdoc target/doc/gpui_navigator.json
 
   gpui-component-example:
     name: gpui-component example
