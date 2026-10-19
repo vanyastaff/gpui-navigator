@@ -2,12 +2,14 @@
 //!
 //! A declarative routing library for GPUI with support for:
 //!
-//! - **Route Transitions** - Fade, slide, scale animations with configurable duration
+//! - **Route Transitions** - Fade, slide, eased and custom animations; slides mirror when going back
 //! - **Nested Routing** - Parent/child route hierarchies with `RouterOutlet`
 //! - **Route Guards** - Authentication, authorization, and custom access control
 //! - **Middleware** - Before/after hooks for navigation events
 //! - **Named Routes** - Navigate using route names instead of paths
-//! - **Route Matching** - Pattern matching with parameters and constraints
+//! - **Route Matching** - `:params`, typed constraints (`:id<int>`), `*` wildcards; query strings ignored
+//! - **Async Guards** - Guards that await I/O before a navigation completes
+//! - **Desktop Navigation** - Back/forward key bindings, mouse side buttons, route change events
 //! - **Error Handling** - Custom 404 and error handlers
 //!
 //! # Quick Start
@@ -124,7 +126,7 @@
 //! gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-pre", "transition"] }
 //! ```
 
-#![doc(html_root_url = "https://docs.rs/gpui-navigator/0.2.0")]
+#![doc(html_root_url = "https://docs.rs/gpui-navigator/0.2.1")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 // Lints are configured in Cargo.toml [lints] section

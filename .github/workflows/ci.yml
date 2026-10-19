@@ -211,3 +211,59 @@ jobs:
         # Advisories come from gpui's own dependency tree, which this crate can't change; report without blocking.
         continue-on-error: true
         run: cargo audit
+
+  semver:
+    name: Semver check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libvulkan-dev \
+            libwayland-dev
+
+      - name: Check semver compatibility with the last release
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  gpui-component-example:
+    name: gpui-component example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libvulkan-dev \
+            libwayland-dev
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            examples/gpui-component/target
+          key: ${{ runner.os }}-cargo-gpui-component-${{ hashFiles('examples/gpui-component/Cargo.lock') }}
+
+      - name: Build the example
+        run: cargo check --locked --manifest-path examples/gpui-component/Cargo.toml

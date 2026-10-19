@@ -1,6 +1,6 @@
 [package]
 name = "gpui-navigator"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Navigator for GPUI with transitions, nested routing, guards, and middleware"
@@ -23,7 +23,7 @@ exclude = [
 
 [package.metadata.docs.rs]
 # Backends are mutually exclusive, so document the default one with every optional module enabled.
-features = ["gpui-02", "log", "guard", "middleware", "cache", "transition"]
+features = ["gpui-02", "log", "guard", "middleware", "cache", "transition", "serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lints.rust]
