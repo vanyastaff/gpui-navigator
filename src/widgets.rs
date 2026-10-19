@@ -989,6 +989,7 @@ fn default_error_page(message: &str) -> impl IntoElement {
 /// async guards, and the component cache size. Drop it anywhere in a view:
 ///
 /// ```no_run
+/// use gpui::prelude::*;
 /// use gpui::*;
 /// use gpui_navigator::{router_debug_panel, router_view};
 ///

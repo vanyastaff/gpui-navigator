@@ -2,7 +2,7 @@
 //!
 //! All route matching in the crate (the match stack, [`Route::matches`](crate::Route::matches),
 //! named outlets, [`RouteParams::from_path`](crate::RouteParams::from_path)) goes through
-//! [`match_prefix`], so patterns behave the same everywhere.
+//! one segment matcher, so patterns behave the same everywhere.
 //!
 //! # Pattern syntax
 //!
