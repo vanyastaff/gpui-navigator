@@ -124,7 +124,7 @@
 //! gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-pre", "transition"] }
 //! ```
 
-#![doc(html_root_url = "https://docs.rs/gpui_navigator/0.1.4")]
+#![doc(html_root_url = "https://docs.rs/gpui-navigator/0.2.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 // Lints are configured in Cargo.toml [lints] section

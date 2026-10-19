@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 ### Breaking
 - GPUI is now selected through mutually exclusive backend features: `gpui-02` (default, `gpui` 0.2),
   `gpui-pre` and `gpui-fast` (#2). Builds with `default-features = false` must add a backend
@@ -18,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factory receives `&mut Window` and `&mut Context<T>`, so pages can create child entities such as
   gpui-component's `InputState` (#1)
 - README note on wrapping the window root in `gpui_component::Root`
+- `test-support` feature, forwarding to the selected backend's `test-support` (used by this crate's own tests)
+- Rendering tests that draw `RouterView`, `RouterOutlet`, `RouterLink` and route transitions in a test
+  window; CI runs the full test suite on every backend
 - Initial public release preparation
 - Comprehensive documentation for all public APIs
 - LICENSE-MIT and LICENSE-APACHE files
@@ -34,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `Route::component_with_params` cache keys no longer depend on `HashMap` iteration order, so routes with
   several parameters reuse their cached entity instead of recreating it
+- Tests now build on the `gpui-pre` and `gpui-fast` backends (they previously required `gpui` 0.2)
 - CI workflow: use `dtolnay/rust-toolchain`, install `libxkbcommon-x11-dev`, run the MSRV job on the declared MSRV
 - MSRV raised to 1.88 to match what the gpui 0.2 dependency tree actually requires
 - Guards no longer use hardcoded `false` returns
@@ -112,5 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Doc comments for all public APIs
 - Example application: `transition_demo`
 
-[Unreleased]: https://github.com/nicholasoxford/gpui-navigator/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/nicholasoxford/gpui-navigator/releases/tag/v0.1.0
+[Unreleased]: https://github.com/vanyastaff/gpui-navigator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/vanyastaff/gpui-navigator/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/vanyastaff/gpui-navigator/releases/tag/v0.1.0

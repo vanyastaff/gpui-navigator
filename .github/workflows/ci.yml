@@ -51,13 +51,19 @@ jobs:
         run: cargo check --lib --no-default-features --features ${{ matrix.backend }},log,guard,middleware,cache,transition
 
   test:
-    name: Test Suite
+    name: Test Suite (${{ matrix.os }}, ${{ matrix.rust }}, ${{ matrix.backend }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable, "1.88"]  # MSRV
+        rust: [stable]
+        backend: [gpui-02, gpui-pre, gpui-fast]
+        include:
+          # MSRV, on the default backend
+          - { os: ubuntu-latest, rust: "1.88", backend: gpui-02 }
+          - { os: windows-latest, rust: "1.88", backend: gpui-02 }
+          - { os: macos-latest, rust: "1.88", backend: gpui-02 }
     steps:
       - uses: actions/checkout@v4
 
@@ -87,13 +93,21 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.rust }}-${{ matrix.backend }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
+      # Unit, integration and rendering tests. Doc tests are written against the
+      # default backend's `gpui` crate name, so they run only there.
       - name: Run tests
         env:
           # rust-toolchain.toml pins `stable`; make the MSRV job actually use the matrix toolchain
           RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
-        run: cargo test --lib
+        run: cargo test --lib --tests --no-default-features --features ${{ matrix.backend }},log,guard,middleware,cache,transition
+
+      - name: Run doc tests
+        if: matrix.backend == 'gpui-02'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+        run: cargo test --doc
 
   fmt:
     name: Rustfmt
