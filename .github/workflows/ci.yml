@@ -12,8 +12,12 @@ env:
 
 jobs:
   check:
-    name: Check
+    name: Check (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [gpui-02, gpui-pre, gpui-fast]
     steps:
       - uses: actions/checkout@v4
 
@@ -40,10 +44,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-check-${{ matrix.backend }}-${{ hashFiles('**/Cargo.lock') }}
 
+      # Backends are mutually exclusive, so all features can't be enabled at once.
       - name: Run cargo check
-        run: cargo check --all-features
+        run: cargo check --lib --no-default-features --features ${{ matrix.backend }},log,guard,middleware,cache,transition
 
   test:
     name: Test Suite
@@ -88,7 +93,7 @@ jobs:
         env:
           # rust-toolchain.toml pins `stable`; make the MSRV job actually use the matrix toolchain
           RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
-        run: cargo test --all-features --lib
+        run: cargo test --lib
 
   fmt:
     name: Rustfmt
@@ -138,7 +143,7 @@ jobs:
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
   docs:
     name: Documentation
@@ -177,7 +182,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: nightly
           RUSTDOCFLAGS: --cfg docsrs -D warnings
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --no-deps
 
   security:
     name: Security Audit

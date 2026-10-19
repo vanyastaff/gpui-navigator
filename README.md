@@ -63,16 +63,38 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
 
 ```toml
 [dependencies]
-gpui-navigator = "0.1"
+gpui-navigator = "0.2"
 gpui = "0.2"
 ```
 
-All features are enabled by default. To pick only what you need:
+All features are enabled by default. To pick only what you need, disable the defaults and
+list a GPUI backend plus the modules you want:
 
 ```toml
 [dependencies]
-gpui-navigator = { version = "0.1", default-features = false, features = ["transition", "guard"] }
+gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-02", "transition", "guard"] }
 ```
+
+### GPUI backends
+
+gpui-navigator works with three flavours of GPUI. Enable exactly one backend feature, the
+one matching the `gpui` your app (and [gpui-component](https://github.com/longbridge/gpui-component),
+if you use it) depends on:
+
+| Feature | Default | Backend crate | Pairs with |
+|---|---|---|---|
+| `gpui-02` | yes | [`gpui`](https://crates.io/crates/gpui) 0.2 (Zed's published release) | gpui-component 0.5.x |
+| `gpui-pre` | no | [`gpui-pre`](https://crates.io/crates/gpui-pre) (snapshots of current gpui from the Zed repo) | gpui-component 0.6.x |
+| `gpui-fast` | no | [`gpui-fast`](https://crates.io/crates/gpui-fast) (fork used by newer gpui-component) | gpui-component 0.7.x |
+
+```toml
+[dependencies]
+gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-pre", "log", "guard", "middleware", "cache", "transition"] }
+gpui = { package = "gpui-pre", version = "0.3" }
+```
+
+The backends are mutually exclusive: selecting `gpui-pre` or `gpui-fast` requires
+`default-features = false`, otherwise the build fails with an explanatory error.
 
 ## Quick Start
 

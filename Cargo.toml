@@ -21,7 +21,8 @@ exclude = [
 ]
 
 [package.metadata.docs.rs]
-all-features = true
+# Backends are mutually exclusive, so document the default one with every optional module enabled.
+features = ["gpui-02", "log", "guard", "middleware", "cache", "transition"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lints.rust]
@@ -34,7 +35,11 @@ pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 
 [dependencies]
-gpui = "0.2"
+# GPUI backend - enable exactly one via the `gpui-02` / `gpui-pre` / `gpui-fast` features.
+# All three expose their library as `gpui`, so the crate code is shared.
+gpui = { version = "0.2", optional = true }
+gpui_pre = { package = "gpui-pre", version = "0.3", optional = true }
+gpui_fast = { package = "gpui-fast", version = "0.1", optional = true }
 
 # Optional dependencies
 lru = { version = "0.16", optional = true }
@@ -42,7 +47,14 @@ log = { version = "0.4", optional = true }
 tracing = { version = "0.1", optional = true }
 
 [features]
-default = ["log", "guard", "middleware", "cache", "transition"]
+default = ["gpui-02", "log", "guard", "middleware", "cache", "transition"]
+# GPUI backends (mutually exclusive)
+# Zed's published `gpui` 0.2 (gpui-component 0.5.x)
+gpui-02 = ["dep:gpui"]
+# `gpui-pre`: snapshots of current gpui from the Zed repository (gpui-component 0.6.x)
+gpui-pre = ["dep:gpui_pre"]
+# `gpui-fast`: the gpui fork used by gpui-component 0.7.x
+gpui-fast = ["dep:gpui_fast"]
 # Core features
 guard = []
 middleware = []
@@ -61,27 +73,34 @@ tokio = { version = "1", features = ["rt", "macros"] }
 [[example]]
 name = "transition_demo"
 path = "examples/transition_demo.rs"
+required-features = ["gpui-02"]
 
 [[example]]
 name = "nested_demo"
 path = "examples/nested_demo.rs"
+required-features = ["gpui-02"]
 
 [[example]]
 name = "stateful_demo"
 path = "examples/stateful_demo.rs"
+required-features = ["gpui-02"]
 
 [[example]]
 name = "error_demo"
 path = "examples/error_demo.rs"
+required-features = ["gpui-02"]
 
 [[example]]
 name = "guard_demo"
 path = "examples/guard_demo.rs"
+required-features = ["gpui-02"]
 
 [[example]]
 name = "middleware_demo"
 path = "examples/middleware_demo.rs"
+required-features = ["gpui-02"]
 
 [[example]]
 name = "lifecycle_demo"
 path = "examples/lifecycle_demo.rs"
+required-features = ["gpui-02"]

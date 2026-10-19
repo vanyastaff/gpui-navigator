@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+- GPUI is now selected through mutually exclusive backend features: `gpui-02` (default, `gpui` 0.2),
+  `gpui-pre` and `gpui-fast` (#2). Builds with `default-features = false` must add a backend
+  feature, e.g. `features = ["gpui-02", ...]`.
+
 ### Added
+- `gpui-pre` and `gpui-fast` backends, for use with gpui-component 0.6.x and 0.7.x (#2)
 - `Route::component_with_context` and `Route::component_with_params_and_context`: stateful routes whose
   factory receives `&mut Window` and `&mut Context<T>`, so pages can create child entities such as
   gpui-component's `InputState` (#1)
