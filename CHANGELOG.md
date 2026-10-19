@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+- GPUI is now selected through mutually exclusive backend features: `gpui-02` (default, `gpui` 0.2),
+  `gpui-pre` and `gpui-fast` (#2). Builds with `default-features = false` must add a backend
+  feature, e.g. `features = ["gpui-02", ...]`.
+
 ### Added
+- `gpui-pre` and `gpui-fast` backends, for use with gpui-component 0.6.x and 0.7.x (#2)
+- `Route::component_with_context` and `Route::component_with_params_and_context`: stateful routes whose
+  factory receives `&mut Window` and `&mut Context<T>`, so pages can create child entities such as
+  gpui-component's `InputState` (#1)
+- README note on wrapping the window root in `gpui_component::Root`
 - Initial public release preparation
 - Comprehensive documentation for all public APIs
 - LICENSE-MIT and LICENSE-APACHE files
@@ -22,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated Cargo.toml with production-ready metadata
 
 ### Fixed
+- `Route::component_with_params` cache keys no longer depend on `HashMap` iteration order, so routes with
+  several parameters reuse their cached entity instead of recreating it
+- CI workflow: use `dtolnay/rust-toolchain`, install `libxkbcommon-x11-dev`, run the MSRV job on the declared MSRV
+- MSRV raised to 1.88 to match what the gpui 0.2 dependency tree actually requires
 - Guards no longer use hardcoded `false` returns
 - Removed dead code warnings in nested route cache
 - Fixed clippy warnings throughout the codebase

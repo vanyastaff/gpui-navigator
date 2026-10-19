@@ -58,7 +58,9 @@ use crate::params::RouteParams;
 #[cfg(feature = "transition")]
 use crate::transition::TransitionConfig;
 use crate::{trace_log, warn_log, RouteMatch};
-use gpui::{AnyElement, AnyView, App, AppContext, BorrowAppContext, IntoElement, Render, Window};
+use gpui::{
+    AnyElement, AnyView, App, AppContext, BorrowAppContext, Context, IntoElement, Render, Window,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,7 +95,7 @@ pub struct NamedRouteRegistry {
 
 impl NamedRouteRegistry {
     /// Create a new empty registry
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -109,7 +111,7 @@ impl NamedRouteRegistry {
     }
 
     /// Check if a route name exists
-    #[must_use] 
+    #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.routes.contains_key(name)
     }
@@ -130,7 +132,7 @@ impl NamedRouteRegistry {
     /// let url = registry.url_for("user.detail", &params).unwrap();
     /// assert_eq!(url, "/users/123");
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn url_for(&self, name: &str, params: &RouteParams) -> Option<String> {
         let pattern = self.get(name)?;
         Some(substitute_params(pattern, params))
@@ -142,13 +144,13 @@ impl NamedRouteRegistry {
     }
 
     /// Get number of registered routes
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.routes.len()
     }
 
     /// Check if registry is empty
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.routes.is_empty()
     }
@@ -265,8 +267,8 @@ pub struct RouteConfig {
 
 impl RouteConfig {
     /// Check if this is a layout route (has children but no explicit builder)
-    #[must_use] 
-    pub fn is_layout(&self) -> bool {
+    #[must_use]
+    pub const fn is_layout(&self) -> bool {
         !self.children.is_empty()
     }
 }
@@ -356,12 +358,15 @@ pub type RouteRef = Arc<Route>;
 
 /// Look up a cached component view by `key`, or create and cache a new one.
 ///
-/// Used by [`Route::component`] and [`Route::component_with_params`] to
-/// avoid duplicating the cache-check/create/store pattern.
+/// Used by all `Route::component*` constructors to avoid duplicating the
+/// cache-check/create/store pattern. The factory receives the window and the
+/// new entity's context, so components that create child entities (for example
+/// `gpui-component` inputs) can be built here.
 fn get_or_create_cached_component<T: Render + 'static>(
+    window: &mut Window,
     cx: &mut App,
     key: String,
-    create: impl FnOnce() -> T,
+    create: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
 ) -> AnyElement {
     // Check the global component cache first (survives across navigations)
     if let Some(router) = cx.try_global::<crate::context::GlobalRouter>() {
@@ -371,7 +376,7 @@ fn get_or_create_cached_component<T: Render + 'static>(
     }
 
     // Not cached — create a new entity and cache it
-    let entity: gpui::Entity<T> = cx.new(|_| create());
+    let entity: gpui::Entity<T> = cx.new(|cx| create(window, cx));
     let view: AnyView = entity.into();
 
     if cx.try_global::<crate::context::GlobalRouter>().is_some() {
@@ -383,6 +388,14 @@ fn get_or_create_cached_component<T: Render + 'static>(
     }
 
     view.into_any_element()
+}
+
+/// Build the cache key for a component route, including parameter values.
+fn component_cache_key<T: 'static>(path: &str, params: &RouteParams) -> String {
+    let type_id = std::any::TypeId::of::<T>();
+    let mut pairs: Vec<_> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    pairs.sort();
+    format!("route:{path}:{type_id:?}?{}", pairs.join("&"))
 }
 
 /// A single route in the navigation tree.
@@ -521,10 +534,62 @@ impl Route {
         let key_path = path_str.clone();
         let type_id = std::any::TypeId::of::<T>();
 
-        Self::new(path_str, move |_window, cx, _| {
+        Self::new(path_str, move |window, cx, _| {
             let key = format!("route:{key_path}:{type_id:?}");
             let create_fn = create.clone();
-            get_or_create_cached_component(cx, key, create_fn)
+            get_or_create_cached_component(window, cx, key, |_, _| create_fn())
+        })
+    }
+
+    /// Create a stateful route whose component is built with access to the
+    /// `Window` and its own `Context`.
+    ///
+    /// Use this instead of [`Route::component`] when the page creates child
+    /// entities in its constructor, e.g. `gpui-component`'s
+    /// `InputState::new(window, cx)`. The component is created once and cached
+    /// like with [`Route::component`], so child state (such as typed input text)
+    /// survives re-renders and navigation.
+    ///
+    /// Do not create entities inside a [`Route::new`] builder: the builder runs
+    /// on every render, so such entities would be recreated each frame.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use gpui_navigator::Route;
+    /// use gpui::*;
+    ///
+    /// struct FormPage {
+    ///     focus: FocusHandle,
+    /// }
+    ///
+    /// impl FormPage {
+    ///     fn new(_window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+    ///         Self { focus: cx.focus_handle() }
+    ///     }
+    /// }
+    ///
+    /// impl Render for FormPage {
+    ///     fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    ///         div().track_focus(&self.focus).child("Form")
+    ///     }
+    /// }
+    ///
+    /// Route::component_with_context("/form", FormPage::new);
+    /// ```
+    pub fn component_with_context<T, F>(path: impl Into<String>, create: F) -> Self
+    where
+        T: Render + 'static,
+        F: Fn(&mut Window, &mut Context<'_, T>) -> T + Send + Sync + 'static + Clone,
+    {
+        let path_str = path.into();
+        let key_path = path_str.clone();
+        let type_id = std::any::TypeId::of::<T>();
+
+        Self::new(path_str, move |window, cx, _| {
+            let key = format!("route:{key_path}:{type_id:?}");
+            let create_fn = create.clone();
+            get_or_create_cached_component(window, cx, key, |window, cx| create_fn(window, cx))
         })
     }
 
@@ -568,18 +633,57 @@ impl Route {
     {
         let path_str = path.into();
         let key_path = path_str.clone();
-        let type_id = std::any::TypeId::of::<T>();
 
-        Self::new(path_str, move |_window, cx, params| {
-            let params_key = params
-                .iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>()
-                .join("&");
-            let key = format!("route:{key_path}:{type_id:?}?{params_key}");
-            let params_clone = params.clone();
+        Self::new(path_str, move |window, cx, params| {
+            let key = component_cache_key::<T>(&key_path, params);
             let create_fn = create.clone();
-            get_or_create_cached_component(cx, key, || create_fn(&params_clone))
+            get_or_create_cached_component(window, cx, key, |_, _| create_fn(params))
+        })
+    }
+
+    /// Create a stateful route with parameters whose component is built with
+    /// access to the `Window` and its own `Context`.
+    ///
+    /// Combines [`Route::component_with_params`] and
+    /// [`Route::component_with_context`]: one cached entity per unique set of
+    /// parameter values, constructed with `window` and `cx` available.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use gpui_navigator::{Route, RouteParams};
+    /// use gpui::*;
+    ///
+    /// struct UserPage {
+    ///     user_id: String,
+    ///     focus: FocusHandle,
+    /// }
+    ///
+    /// impl Render for UserPage {
+    ///     fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    ///         div().track_focus(&self.focus).child(format!("User: {}", self.user_id))
+    ///     }
+    /// }
+    ///
+    /// Route::component_with_params_and_context("/user/:id", |params, _window, cx| UserPage {
+    ///     user_id: params.get("id").cloned().unwrap_or_default(),
+    ///     focus: cx.focus_handle(),
+    /// });
+    /// ```
+    pub fn component_with_params_and_context<T, F>(path: impl Into<String>, create: F) -> Self
+    where
+        T: Render + 'static,
+        F: Fn(&RouteParams, &mut Window, &mut Context<'_, T>) -> T + Send + Sync + 'static + Clone,
+    {
+        let path_str = path.into();
+        let key_path = path_str.clone();
+
+        Self::new(path_str, move |window, cx, params| {
+            let key = component_cache_key::<T>(&key_path, params);
+            let create_fn = create.clone();
+            get_or_create_cached_component(window, cx, key, |window, cx| {
+                create_fn(params, window, cx)
+            })
         })
     }
 
@@ -836,7 +940,7 @@ impl Route {
     }
 
     /// Check if this route has a named outlet
-    #[must_use] 
+    #[must_use]
     pub fn has_named_outlet(&self, name: &str) -> bool {
         self.named_children.contains_key(name)
     }
@@ -847,7 +951,7 @@ impl Route {
     }
 
     /// Match a path against this route
-    #[must_use] 
+    #[must_use]
     pub fn matches(&self, path: &str) -> Option<RouteMatch> {
         match_path(&self.config.path, path)
     }
@@ -870,7 +974,7 @@ impl Route {
     /// Find a child route by path segment
     ///
     /// Used internally by `RouterOutlet` to resolve child routes.
-    #[must_use] 
+    #[must_use]
     pub fn find_child(&self, segment: &str) -> Option<&RouteRef> {
         self.children.iter().find(|child| {
             child.config.path == segment || child.config.path.trim_start_matches('/') == segment
@@ -878,7 +982,7 @@ impl Route {
     }
 
     /// Get all child routes
-    #[must_use] 
+    #[must_use]
     pub fn get_children(&self) -> &[RouteRef] {
         &self.children
     }
@@ -1357,5 +1461,83 @@ mod tests {
     #[should_panic(expected = "Invalid route path")]
     fn test_route_config_new_panics_on_invalid() {
         let _ = RouteConfig::new("/users//profile");
+    }
+
+    // Component constructors with Window/Context access
+
+    struct CtxPage {
+        _focus: gpui::FocusHandle,
+    }
+
+    impl Render for CtxPage {
+        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+            gpui::div()
+        }
+    }
+
+    struct EmptyRoot;
+
+    impl Render for EmptyRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+            gpui::div()
+        }
+    }
+
+    #[gpui::test]
+    fn test_component_with_context_is_created_once(cx: &mut gpui::TestAppContext) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let created = Arc::new(AtomicUsize::new(0));
+        let counter = created.clone();
+        let route = Route::component_with_context("/form", move |_window, cx| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            CtxPage {
+                _focus: cx.focus_handle(),
+            }
+        });
+        let builder = route.builder.clone().unwrap();
+
+        cx.update(|cx| crate::init_router(cx, |_| {}));
+        let window = cx.add_window(|_, _| EmptyRoot);
+        window
+            .update(cx, |_, window, cx| {
+                let params = RouteParams::new();
+                builder(window, cx, &params);
+                builder(window, cx, &params);
+            })
+            .unwrap();
+
+        assert_eq!(created.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    fn test_component_with_params_and_context_caches_per_params(cx: &mut gpui::TestAppContext) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let created = Arc::new(AtomicUsize::new(0));
+        let counter = created.clone();
+        let route = Route::component_with_params_and_context("/u/:id", move |_, _, cx| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            CtxPage {
+                _focus: cx.focus_handle(),
+            }
+        });
+        let builder = route.builder.clone().unwrap();
+
+        cx.update(|cx| crate::init_router(cx, |_| {}));
+        let window = cx.add_window(|_, _| EmptyRoot);
+        window
+            .update(cx, |_, window, cx| {
+                let mut one = RouteParams::new();
+                one.insert("id".to_string(), "1".to_string());
+                let mut two = RouteParams::new();
+                two.insert("id".to_string(), "2".to_string());
+                builder(window, cx, &one);
+                builder(window, cx, &one);
+                builder(window, cx, &two);
+            })
+            .unwrap();
+
+        assert_eq!(created.load(Ordering::SeqCst), 2);
     }
 }

@@ -15,6 +15,7 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
   - [Route::view — Stateless Pages](#routeview--stateless-pages)
   - [Route::component — Stateful Pages](#routecomponent--stateful-pages)
   - [Route::component_with_params — Stateful + Params](#routecomponent_with_params--stateful--params)
+  - [Route::component_with_context — Pages That Need Window/Context](#routecomponent_with_context--pages-that-need-windowcontext)
   - [Route::new — Full Control](#routenew--full-control)
 - [Navigation API](#navigation-api)
   - [Programmatic Navigation](#programmatic-navigation)
@@ -62,16 +63,38 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
 
 ```toml
 [dependencies]
-gpui-navigator = "0.1"
+gpui-navigator = "0.2"
 gpui = "0.2"
 ```
 
-All features are enabled by default. To pick only what you need:
+All features are enabled by default. To pick only what you need, disable the defaults and
+list a GPUI backend plus the modules you want:
 
 ```toml
 [dependencies]
-gpui-navigator = { version = "0.1", default-features = false, features = ["transition", "guard"] }
+gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-02", "transition", "guard"] }
 ```
+
+### GPUI backends
+
+gpui-navigator works with three flavours of GPUI. Enable exactly one backend feature, the
+one matching the `gpui` your app (and [gpui-component](https://github.com/longbridge/gpui-component),
+if you use it) depends on:
+
+| Feature | Default | Backend crate | Pairs with |
+|---|---|---|---|
+| `gpui-02` | yes | [`gpui`](https://crates.io/crates/gpui) 0.2 (Zed's published release) | gpui-component 0.5.x |
+| `gpui-pre` | no | [`gpui-pre`](https://crates.io/crates/gpui-pre) (snapshots of current gpui from the Zed repo) | gpui-component 0.6.x |
+| `gpui-fast` | no | [`gpui-fast`](https://crates.io/crates/gpui-fast) (fork used by newer gpui-component) | gpui-component 0.7.x |
+
+```toml
+[dependencies]
+gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-pre", "log", "guard", "middleware", "cache", "transition"] }
+gpui = { package = "gpui-pre", version = "0.3" }
+```
+
+The backends are mutually exclusive: selecting `gpui-pre` or `gpui-fast` requires
+`default-features = false`, otherwise the build fails with an explanatory error.
 
 ## Quick Start
 
@@ -102,13 +125,13 @@ fn main() {
 struct AppShell;
 
 impl Render for AppShell {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(RouterView::new())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(router_view(window, cx))
     }
 }
 ```
 
-`init_router` registers routes globally. `RouterView` at the top level renders whichever route matches the current path.
+`init_router` registers routes globally. `router_view` at the top level renders whichever route matches the current path.
 
 ## Defining Routes
 
@@ -177,6 +200,51 @@ Route::component_with_params("/users/:id", |params| {
     UserPage::new(id)
 })
 ```
+
+### `Route::component_with_context` — Pages That Need Window/Context
+
+Use this when the page creates child entities in its constructor, such as
+[gpui-component](https://github.com/longbridge/gpui-component)'s `InputState`. The factory
+receives `&mut Window` and the new entity's `&mut Context<Self>`, and the entity is cached
+like with `component`, so typed text survives re-renders and navigation:
+
+```rust
+use gpui_component::input::{Input, InputState};
+
+struct HomePage { input: Entity<InputState> }
+
+impl HomePage {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Enter your name..."));
+        Self { input }
+    }
+}
+
+impl Render for HomePage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child(Input::new(&self.input))
+    }
+}
+
+Route::component_with_context("/", HomePage::new)
+```
+
+`Route::component_with_params_and_context(path, |params, window, cx| ...)` is the
+variant that also receives route parameters.
+
+Don't call `cx.new(...)` inside a `Route::new` builder: the builder runs on every render, so
+the entity (and anything typed into it) would be recreated each frame.
+
+> **Using gpui-component?** Its widgets expect the window's root view to be
+> `gpui_component::Root`. Wrap your app view when opening the window, otherwise
+> `Input` and friends panic with ``called `Option::unwrap()` on a `None` value`` in `root.rs`:
+>
+> ```rust
+> cx.open_window(WindowOptions::default(), |window, cx| {
+>     let view = cx.new(|_| AppShell);
+>     cx.new(|cx| gpui_component::Root::new(view, window, cx))
+> })
+> ```
 
 ### `Route::new` — Full Control
 
@@ -254,19 +322,14 @@ Top-level widget that renders the matched route at depth 0. Place this once at t
 
 ```rust
 impl Render for AppShell {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(RouterView::new())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(router_view(window, cx))
     }
 }
 ```
 
-Functional alternative:
-
-```rust
-fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-    div().size_full().child(router_view(window, cx))
-}
-```
+`RouterView` is also available as a view: keep an `Entity<RouterView>` (created once with
+`cx.new(|_| RouterView::new())`) and pass it to `.child(...)`.
 
 ### RouterOutlet
 
@@ -274,18 +337,20 @@ Renders child routes inside a parent layout. Each `RouterOutlet` increments the 
 
 ```rust
 // In a parent route's component
-fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
     div()
         .child("Dashboard Header")
-        .child(RouterOutlet::new())  // child routes render here
+        .child(router_outlet(window, cx, "dashboard-outlet"))  // child routes render here
 }
 ```
 
 Named outlet for multiple content areas:
 
 ```rust
-RouterOutlet::named("sidebar")
+router_outlet_named(window, cx, "dashboard-sidebar", "sidebar")
 ```
+
+Or hold the outlet as an entity: `cx.new(|_| RouterOutlet::new())` / `RouterOutlet::named("sidebar")`.
 
 ### RouterLink
 
@@ -701,6 +766,8 @@ Full API documentation is available on [docs.rs](https://docs.rs/gpui-navigator)
 | `Route::view(path, closure)` | Stateless route |
 | `Route::component(path, factory)` | Stateful route (Entity cached) |
 | `Route::component_with_params(path, factory)` | Stateful + params |
+| `Route::component_with_context(path, \|window, cx\| ...)` | Stateful, built with Window/Context |
+| `Route::component_with_params_and_context(path, \|params, window, cx\| ...)` | Stateful + params, built with Window/Context |
 | `Route::new(path, handler)` | Full-control route |
 | `.children(vec![...])` | Add child routes |
 | `.name("n")` | Name the route |
@@ -708,8 +775,8 @@ Full API documentation is available on [docs.rs](https://docs.rs/gpui-navigator)
 | `.guard(AuthGuard::new(check, redirect))` | Add guard |
 | `.middleware(impl RouteMiddleware)` | Add middleware |
 | `.lifecycle(impl RouteLifecycle)` | Add lifecycle hooks |
-| `RouterView::new()` | Root route renderer |
-| `RouterOutlet::new()` | Child route renderer |
+| `router_view(window, cx)` | Root route renderer (`RouterView` as a view) |
+| `router_outlet(window, cx, key)` | Child route renderer (`RouterOutlet` as a view) |
 | `RouterOutlet::named("n")` | Named outlet |
 | `RouterLink::new(path).child(el).build(cx)` | Nav link |
 | `RouteParams::get("key")` | Get path param |
@@ -719,7 +786,7 @@ Full API documentation is available on [docs.rs](https://docs.rs/gpui-navigator)
 
 ## Minimum Supported Rust Version
 
-Rust 1.75 or later.
+Rust 1.88 or later.
 
 ## License
 

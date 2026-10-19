@@ -236,12 +236,12 @@ fn resolve_child_route_impl(
     } else if parent_trimmed.is_empty() {
         // Root parent — entire current path is the remainder
         current_trimmed
-    } else if let Some(rest) = current_trimmed.strip_prefix(parent_trimmed) {
-        // Static parent — strip its prefix and any leading slash
-        rest.trim_start_matches('/')
     } else {
-        // Current path doesn't start with parent — no match
-        return None;
+        // Static parent — strip its prefix and any leading slash.
+        // If the current path doesn't start with the parent, there is no match.
+        current_trimmed
+            .strip_prefix(parent_trimmed)?
+            .trim_start_matches('/')
     };
 
     trace_log!(

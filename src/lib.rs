@@ -108,11 +108,51 @@
 //! | `cache`      | yes     | LRU cache for route resolution (depends on `lru`) |
 //! | `log`        | yes     | Logging via the `log` crate |
 //! | `tracing`    | no      | Logging via `tracing` (mutually exclusive with `log`) |
+//!
+//! # GPUI Backends
+//!
+//! Exactly one backend feature must be enabled. Pick the one that matches the
+//! `gpui` your app (and `gpui-component`, if you use it) depends on:
+//!
+//! | Feature     | Default | Backend crate | Used by |
+//! |-------------|---------|---------------|---------|
+//! | `gpui-02`   | yes     | `gpui` 0.2    | gpui-component 0.5.x |
+//! | `gpui-pre`  | no      | `gpui-pre`    | gpui-component 0.6.x |
+//! | `gpui-fast` | no      | `gpui-fast`   | gpui-component 0.7.x |
+//!
+//! ```toml
+//! gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-pre", "transition"] }
+//! ```
 
 #![doc(html_root_url = "https://docs.rs/gpui_navigator/0.1.4")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 // Lints are configured in Cargo.toml [lints] section
+
+// GPUI backend selection. Every backend crate names its library `gpui`; the
+// non-default ones are renamed in Cargo.toml and aliased back here so the rest
+// of the crate can keep using `gpui::...` paths.
+#[cfg(not(any(feature = "gpui-02", feature = "gpui-pre", feature = "gpui-fast")))]
+compile_error!(
+    "gpui-navigator: enable one GPUI backend feature: `gpui-02` (default), `gpui-pre` or `gpui-fast`"
+);
+#[cfg(any(
+    all(feature = "gpui-02", feature = "gpui-pre"),
+    all(feature = "gpui-02", feature = "gpui-fast"),
+    all(feature = "gpui-pre", feature = "gpui-fast"),
+))]
+compile_error!(
+    "gpui-navigator: the GPUI backend features `gpui-02`, `gpui-pre` and `gpui-fast` are mutually exclusive; \
+     add `default-features = false` when selecting `gpui-pre` or `gpui-fast`"
+);
+#[cfg(all(
+    feature = "gpui-fast",
+    not(feature = "gpui-02"),
+    not(feature = "gpui-pre")
+))]
+extern crate gpui_fast as gpui;
+#[cfg(all(feature = "gpui-pre", not(feature = "gpui-02")))]
+extern crate gpui_pre as gpui;
 
 // Logging abstraction
 pub mod logging;

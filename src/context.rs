@@ -674,12 +674,12 @@ impl GlobalRouter {
 
     /// Check if can go forward.
     #[must_use]
-    pub fn can_go_forward(&self) -> bool {
+    pub const fn can_go_forward(&self) -> bool {
         self.state.can_go_forward()
     }
 
     /// Get mutable state reference.
-    pub fn state_mut(&mut self) -> &mut RouterState {
+    pub const fn state_mut(&mut self) -> &mut RouterState {
         &mut self.state
     }
 
@@ -691,7 +691,7 @@ impl GlobalRouter {
 
     /// Get nested route cache (mutable).
     #[cfg(feature = "cache")]
-    pub fn nested_cache_mut(&mut self) -> &mut RouteCache {
+    pub const fn nested_cache_mut(&mut self) -> &mut RouteCache {
         &mut self.nested_cache
     }
 
@@ -712,6 +712,7 @@ impl GlobalRouter {
     }
 
     /// Get a reference to the current error handlers.
+    #[must_use]
     pub const fn error_handlers(&self) -> &ErrorHandlers {
         &self.error_handlers
     }
@@ -748,13 +749,13 @@ impl GlobalRouter {
 
     /// Set transition for the next navigation.
     #[cfg(feature = "transition")]
-    pub fn set_next_transition(&mut self, transition: Transition) {
+    pub const fn set_next_transition(&mut self, transition: Transition) {
         self.next_transition = Some(transition);
     }
 
     /// Get and consume the next transition override.
     #[cfg(feature = "transition")]
-    pub fn take_next_transition(&mut self) -> Option<Transition> {
+    pub const fn take_next_transition(&mut self) -> Option<Transition> {
         self.next_transition.take()
     }
 
@@ -767,7 +768,7 @@ impl GlobalRouter {
 
     /// Clear transition override.
     #[cfg(feature = "transition")]
-    pub fn clear_next_transition(&mut self) {
+    pub const fn clear_next_transition(&mut self) {
         self.next_transition = None;
     }
 
@@ -1055,7 +1056,7 @@ pub struct Navigator;
 
 impl Navigator {
     /// Get a [`NavigatorHandle`] for chained navigation calls.
-    pub fn of<C: BorrowAppContext + BorrowMut<App>>(cx: &mut C) -> NavigatorHandle<'_, C> {
+    pub const fn of<C: BorrowAppContext + BorrowMut<App>>(cx: &mut C) -> NavigatorHandle<'_, C> {
         NavigatorHandle { cx }
     }
 
