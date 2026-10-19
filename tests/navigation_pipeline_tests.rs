@@ -2,6 +2,8 @@
 //! strings, wildcards, constraints), guards, lifecycle hooks, async guards,
 //! page caching, route change events, back/forward actions and transitions.
 
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 // Alias the selected GPUI backend to `gpui`, as the library does.
 #[cfg(all(
     feature = "gpui-fast",
@@ -242,8 +244,7 @@ fn test_lifecycle_runs_on_levels_entered_and_left(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn test_on_enter_deny_rolls_back(cx: &mut TestAppContext) {
-    let log: Log = Arc::default();
-    let routes_log = log.clone();
+    let routes_log: Log = Arc::default();
     cx.update(|cx| {
         init_router(cx, move |router| {
             router.add_route(page("/"));
@@ -508,7 +509,7 @@ fn test_custom_and_eased_transitions_render(cx: &mut TestAppContext) {
             );
             router.add_route(page("/b").transition(Transition::custom(
                 100,
-                |layer, p| layer.opacity(p),
+                Styled::opacity,
                 |layer, p| layer.opacity(1.0 - p),
             )));
         });
