@@ -110,7 +110,11 @@ impl<'a> PatternSegment<'a> {
         if let Some(rest) = segment.strip_prefix(':') {
             let (name, constraint) = match rest.find(['<', '{']) {
                 Some(pos) => {
-                    let close = if rest.as_bytes()[pos] == b'<' { '>' } else { '}' };
+                    let close = if rest.as_bytes()[pos] == b'<' {
+                        '>'
+                    } else {
+                        '}'
+                    };
                     let Some(inner) = rest[pos + 1..].strip_suffix(close) else {
                         return Err(format!(
                             "Route parameter '{rest}' has an unterminated constraint (expected ':name<type>')"
@@ -143,7 +147,11 @@ impl<'a> PatternSegment<'a> {
                     "Wildcard name '{name}' must contain only alphanumeric characters and underscores"
                 ));
             }
-            let name = if name.is_empty() { WILDCARD_PARAM } else { name };
+            let name = if name.is_empty() {
+                WILDCARD_PARAM
+            } else {
+                name
+            };
             return Ok(Self::Wildcard { name });
         }
 
@@ -220,6 +228,40 @@ pub(crate) fn validate_pattern(pattern: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Return `true` if every path matched by `later` is already matched by
+/// `earlier`, so a route registered with `later` after `earlier` (as a
+/// sibling) can never be reached.
+///
+/// Conservative: constrained parameters only shadow identical constraints.
+#[must_use]
+pub(crate) fn shadows(earlier: &str, later: &str) -> bool {
+    let mut earlier_segs = pattern_segments(earlier).map(PatternSegment::parse_lenient);
+    let mut later_segs = pattern_segments(later).map(PatternSegment::parse_lenient);
+    loop {
+        match (earlier_segs.next(), later_segs.next()) {
+            (None, None) | (Some(PatternSegment::Wildcard { .. }), _) => return true,
+            (Some(PatternSegment::Static(a)), Some(PatternSegment::Static(b))) if a == b => {}
+            (
+                Some(PatternSegment::Param {
+                    constraint: None, ..
+                }),
+                Some(PatternSegment::Static(_) | PatternSegment::Param { .. }),
+            ) => {}
+            (
+                Some(PatternSegment::Param {
+                    constraint: Some(a),
+                    ..
+                }),
+                Some(PatternSegment::Param {
+                    constraint: Some(b),
+                    ..
+                }),
+            ) if a == b => {}
+            _ => return false,
+        }
+    }
 }
 
 /// Match `pattern` against the start of `remaining`.
@@ -356,6 +398,18 @@ mod tests {
         assert!(validate_pattern("/a/:id<int").is_err());
         assert!(validate_pattern("/a/*/b").is_err());
         assert!(validate_pattern("/a/:id/:id").is_err());
+    }
+
+    #[test]
+    fn shadowing() {
+        assert!(shadows("/:id", "/about"));
+        assert!(shadows("/users/:id", "/users/:name"));
+        assert!(shadows("*", "/anything"));
+        assert!(shadows("/users", "users/"));
+        assert!(!shadows("/about", "/:id"));
+        assert!(!shadows("/:id<int>", "/about"));
+        assert!(!shadows("/users/:id", "/users/:id/edit"));
+        assert!(!shadows("/users/:id", "/users/*rest"));
     }
 
     #[test]

@@ -230,7 +230,9 @@ where
     fn on_enter(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
         self.inner
             .as_ref()
-            .map_or(NavigationAction::Continue, |inner| inner.on_enter(cx, request))
+            .map_or(NavigationAction::Continue, |inner| {
+                inner.on_enter(cx, request)
+            })
     }
 
     fn on_exit(&self, cx: &App) -> NavigationAction {

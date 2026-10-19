@@ -37,8 +37,8 @@ use crate::route::NamedRouteRegistry;
 #[cfg(feature = "transition")]
 use crate::transition::Transition;
 use crate::{
-    debug_log, error_log, info_log, trace_log, warn_log, IntoRoute, QueryParams, Route, RouteParams,
-    RouterState,
+    debug_log, error_log, info_log, trace_log, warn_log, IntoRoute, QueryParams, Route,
+    RouteParams, RouterState,
 };
 use gpui::{AnyView, App, BorrowAppContext, Global};
 use std::borrow::BorrowMut;
@@ -201,22 +201,32 @@ impl GlobalRouter {
     /// also registered in the [`NamedRouteRegistry`] for URL generation via
     /// [`url_for`](Self::url_for).
     pub fn add_route(&mut self, route: Route) {
-        if let Some(name) = &route.config.name {
-            info_log!(
-                "Registered route '{}' (name: '{}')",
-                route.config.path,
-                name
-            );
-            self.named_routes
-                .register(name.clone(), route.config.path.clone());
-        } else {
-            info_log!("Registered route '{}'", route.config.path);
-        }
+        info_log!("Registered route '{}'", route.config.path);
+        warn_shadowed(self.state.routes(), &route);
+        self.register_names(&route, "");
         self.state.add_route(route);
         #[cfg(feature = "cache")]
         self.nested_cache.clear();
         // Re-resolve match stack after adding routes
         self.re_resolve();
+    }
+
+    /// Register the names of `route` and its (named-outlet) children, using
+    /// each route's full path so `url_for` works for nested routes too.
+    fn register_names(&mut self, route: &Route, parent_path: &str) {
+        let full_path = crate::nested::build_child_path(parent_path, &route.config.path);
+        let full_path = crate::nested::normalize_path(&full_path).into_owned();
+        if let Some(name) = &route.config.name {
+            debug_log!("Route name '{}' → '{}'", name, full_path);
+            self.named_routes.register(name.clone(), full_path.clone());
+        }
+        for child in route
+            .children
+            .iter()
+            .chain(route.named_children.values().flatten())
+        {
+            self.register_names(child, &full_path);
+        }
     }
 
     // ========================================================================
@@ -355,8 +365,8 @@ impl GlobalRouter {
         let target_stack = resolve_match_stack(self.state.routes(), &path);
 
         // Build request — used by guards, lifecycle hooks, and middleware
-        let request =
-            NavigationRequest::with_from(path.clone(), from.clone()).with_params(target_stack.params());
+        let request = NavigationRequest::with_from(path.clone(), from.clone())
+            .with_params(target_stack.params());
 
         // Step 1: Run guards
         #[cfg(feature = "guard")]
@@ -398,9 +408,9 @@ impl GlobalRouter {
                         id: self.nav_seq,
                         intent,
                         redirect_depth,
-                        future: Rc::new(RefCell::new(Some(
-                            crate::guards::sequence_guard_futures(futures),
-                        ))),
+                        future: Rc::new(RefCell::new(Some(crate::guards::sequence_guard_futures(
+                            futures,
+                        )))),
                     });
                     return NavigationResult::Pending { path };
                 }
@@ -592,10 +602,7 @@ impl GlobalRouter {
     /// Drop a navigation that is waiting on async guards.
     fn cancel_pending(&mut self) {
         if let Some(pending) = self.pending.take() {
-            debug_log!(
-                "Cancelling pending navigation to '{}'",
-                pending.intent.path
-            );
+            debug_log!("Cancelling pending navigation to '{}'", pending.intent.path);
         }
     }
 
@@ -986,7 +993,8 @@ impl GlobalRouter {
     pub fn evict_components(&mut self, route_path: &str) -> usize {
         let prefix = component_key_prefix(route_path);
         let before = self.component_cache.len();
-        self.component_cache.retain(|key, _| !key.starts_with(&prefix));
+        self.component_cache
+            .retain(|key, _| !key.starts_with(&prefix));
         before - self.component_cache.len()
     }
 
@@ -1004,7 +1012,11 @@ impl GlobalRouter {
     /// The cached page view rendered for a match-stack entry, if any.
     fn page_view(&self, entry: &crate::resolve::MatchEntry) -> Option<&AnyView> {
         let prefix = component_key_prefix(&entry.route.config.path);
-        let mut pairs: Vec<_> = entry.params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let mut pairs: Vec<_> = entry
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
         pairs.sort();
         let with_params = format!("?{}", pairs.join("&"));
         self.component_cache.iter().find_map(|(key, cached)| {
@@ -1210,6 +1222,24 @@ struct RouterSnapshot {
 struct CachedComponent {
     view: AnyView,
     last_used: Cell<u64>,
+}
+
+/// Log a warning when `route` (or one of its children) can never match
+/// because an earlier sibling's pattern already covers it.
+fn warn_shadowed(siblings: &[Arc<Route>], route: &Route) {
+    for earlier in siblings {
+        if crate::matcher::shadows(&earlier.config.path, &route.config.path) {
+            warn_log!(
+                "Route '{}' is unreachable: the earlier route '{}' matches every path it does. \
+                 Register the more specific route first.",
+                route.config.path,
+                earlier.config.path
+            );
+        }
+    }
+    for (i, child) in route.children.iter().enumerate() {
+        warn_shadowed(&route.children[..i], child);
+    }
 }
 
 /// Number of leading levels two match stacks share (same route, same params).
@@ -1446,9 +1476,7 @@ impl Navigator {
     }
 
     /// Go back and return the pipeline's result, or `None` at the start of history.
-    pub fn try_back(
-        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
-    ) -> Option<NavigationResult> {
+    pub fn try_back(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) -> Option<NavigationResult> {
         run_optional_navigation(cx.borrow_mut(), GlobalRouter::back)
     }
 
@@ -2047,5 +2075,4 @@ mod tests {
         assert_eq!(log[1], "after:/page");
         drop(log);
     }
-
 }

@@ -214,9 +214,9 @@ pub use guards::{
 };
 pub use history::{History, HistoryEntry, HistorySnapshot, HistoryState};
 pub use lifecycle::{NavigationAction, RouteLifecycle};
+pub use matcher::{path_only, split_path_and_query, WILDCARD_PARAM};
 #[cfg(feature = "middleware")]
 pub use middleware::{middleware_fn, RouteMiddleware};
-pub use matcher::{path_only, split_path_and_query, WILDCARD_PARAM};
 pub use nested::{build_child_path, extract_param_name, normalize_path, resolve_child_route};
 pub use params::{QueryParams, RouteParams};
 pub use resolve::{resolve_match_stack, MatchEntry, MatchStack};
@@ -231,8 +231,9 @@ pub use transition::{
     SlideDirection, Transition, TransitionConfig, TransitionStyle,
 };
 pub use widgets::{
-    is_link_active, render_router_outlet, ActiveMatch, router_link, router_outlet, router_outlet_named, router_view,
-    DefaultPages, RouterLink, RouterOutlet, RouterView,
+    is_link_active, render_router_outlet, router_debug_panel, router_link, router_outlet,
+    router_outlet_named, router_view, ActiveMatch, DefaultPages, RouterLink, RouterOutlet,
+    RouterView,
 };
 
 use std::collections::HashMap;

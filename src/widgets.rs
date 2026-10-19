@@ -39,7 +39,6 @@ use crate::transition::Transition;
 #[cfg(feature = "transition")]
 use gpui::{Animation, AnimationExt};
 
-
 // ============================================================================
 // RouterOutlet (MatchStack-based — no RefCell)
 // ============================================================================
@@ -452,9 +451,11 @@ fn render_with_transition(
     // Enter layer: new content animates in (styled at progress 0 before the first frame)
     let initial = enter_style(layer().child(enter_content), 0.0);
     container
-        .child(initial.with_animation(enter_id, animation, move |this, delta| {
-            enter_style(this, delta.clamp(0.0, 1.0))
-        }))
+        .child(
+            initial.with_animation(enter_id, animation, move |this, delta| {
+                enter_style(this, delta.clamp(0.0, 1.0))
+            }),
+        )
         .into_any_element()
 }
 
@@ -975,6 +976,90 @@ fn default_error_page(message: &str) -> impl IntoElement {
                 .line_height(relative(1.6))
                 .child(message.to_string()),
         )
+}
+
+// ============================================================================
+// Debug panel
+// ============================================================================
+
+/// A small read-only panel showing the router's state, for development.
+///
+/// Lists the current location, the matched route at every depth with its
+/// parameters, the history with the cursor marked, any navigation waiting on
+/// async guards, and the component cache size. Drop it anywhere in a view:
+///
+/// ```no_run
+/// use gpui::*;
+/// use gpui_navigator::{router_debug_panel, router_view};
+///
+/// struct AppShell;
+///
+/// impl Render for AppShell {
+///     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+///         div()
+///             .size_full()
+///             .child(router_view(window, cx))
+///             .when(cfg!(debug_assertions), |this| this.child(router_debug_panel(cx)))
+///     }
+/// }
+/// ```
+pub fn router_debug_panel(cx: &App) -> Div {
+    let panel = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_2()
+        .text_xs()
+        .font_family("monospace")
+        .bg(rgba(0x0000_00cc))
+        .text_color(rgb(0x00e0_e0e0));
+
+    let Some(router) = cx.try_global::<GlobalRouter>() else {
+        return panel.child("router: not initialized");
+    };
+
+    let mut panel = panel.child(format!("location: {}", router.current_path()));
+    if let Some(pending) = router.pending_path() {
+        panel = panel.child(format!("pending: {pending} (async guards)"));
+    }
+
+    panel = panel.child("match stack:");
+    let stack = router.match_stack();
+    if stack.is_empty() {
+        panel = panel.child("  (no match → not found page)");
+    }
+    for entry in stack.entries() {
+        let mut params: Vec<_> = entry
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        params.sort();
+        let params = if params.is_empty() {
+            String::new()
+        } else {
+            format!("  {{{}}}", params.join(", "))
+        };
+        panel = panel.child(format!(
+            "  [{}] {}{}",
+            entry.depth,
+            if entry.route.config.path.is_empty() {
+                "(index)"
+            } else {
+                &entry.route.config.path
+            },
+            params
+        ));
+    }
+
+    let snapshot = router.history_snapshot();
+    panel = panel.child(format!("history ({}):", snapshot.entries.len()));
+    for (i, entry) in snapshot.entries.iter().enumerate() {
+        let marker = if i == snapshot.current { "▶" } else { " " };
+        panel = panel.child(format!(" {marker} {}", entry.path));
+    }
+
+    panel.child(format!("cached pages: {}", router.component_cache_len()))
 }
 
 #[cfg(test)]
