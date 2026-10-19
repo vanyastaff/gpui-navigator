@@ -183,6 +183,7 @@ pub mod guards;
 pub mod transition;
 
 // Other modules
+pub mod matcher;
 pub mod nested;
 pub mod params;
 pub mod resolve;
@@ -196,17 +197,19 @@ mod context;
 pub use cache::{CacheStats, RouteCache, RouteId};
 pub use context::{
     current_path, init_router, navigate, GlobalRouter, NavigationRequest, Navigator,
-    NavigatorHandle, UseRouter,
+    NavigatorHandle, UseRouter, DEFAULT_COMPONENT_CACHE_CAPACITY,
 };
 pub use error::{ErrorHandler, ErrorHandlers, NavigationError, NavigationResult, NotFoundHandler};
 #[cfg(feature = "guard")]
 pub use guards::{
-    guard_fn, AuthGuard, GuardBuilder, Guards, NotGuard, PermissionGuard, RoleGuard, RouteGuard,
+    async_guard_fn, guard_fn, AsyncFnGuard, AuthGuard, GuardBuilder, GuardFuture, Guards, NotGuard,
+    PermissionGuard, RoleGuard, RouteGuard,
 };
 pub use history::{History, HistoryEntry, HistoryState};
 pub use lifecycle::{NavigationAction, RouteLifecycle};
 #[cfg(feature = "middleware")]
 pub use middleware::{middleware_fn, RouteMiddleware};
+pub use matcher::{path_only, split_path_and_query, WILDCARD_PARAM};
 pub use nested::{build_child_path, extract_param_name, normalize_path, resolve_child_route};
 pub use params::{QueryParams, RouteParams};
 pub use resolve::{resolve_match_stack, MatchEntry, MatchStack};

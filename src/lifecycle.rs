@@ -22,7 +22,7 @@
 //! 7. **Middleware `after`** — cross-cutting post-navigation logic
 
 use crate::NavigationRequest;
-use gpui::App;
+use gpui::{AnyView, App};
 
 // ============================================================================
 // NavigationAction — unified result for guards, lifecycle, middleware
@@ -192,6 +192,69 @@ pub trait RouteLifecycle: Send + Sync + 'static {
     /// Use this to check for unsaved changes or confirm navigation away.
     /// Return [`NavigationAction::deny`] to prevent navigation.
     fn can_deactivate(&self, cx: &App) -> NavigationAction;
+
+    /// Like [`can_deactivate`](Self::can_deactivate), but also receives the
+    /// cached page view of a `Route::component*` route (if one was rendered).
+    ///
+    /// The router calls this method; the default forwards to
+    /// `can_deactivate`. See [`Route::can_leave`](crate::Route::can_leave) for
+    /// the typed shortcut.
+    fn can_deactivate_page(&self, cx: &App, page: Option<&AnyView>) -> NavigationAction {
+        let _ = page;
+        self.can_deactivate(cx)
+    }
+}
+
+/// Lifecycle created by [`Route::can_leave`](crate::Route::can_leave).
+pub(crate) struct PageLeaveCheck<T, F> {
+    check: F,
+    inner: Option<Box<dyn RouteLifecycle>>,
+    _page: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T, F> PageLeaveCheck<T, F> {
+    pub(crate) fn new(check: F, inner: Option<Box<dyn RouteLifecycle>>) -> Self {
+        Self {
+            check,
+            inner,
+            _page: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T, F> RouteLifecycle for PageLeaveCheck<T, F>
+where
+    T: 'static,
+    F: Fn(&T, &App) -> NavigationAction + Send + Sync + 'static,
+{
+    fn on_enter(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
+        self.inner
+            .as_ref()
+            .map_or(NavigationAction::Continue, |inner| inner.on_enter(cx, request))
+    }
+
+    fn on_exit(&self, cx: &App) -> NavigationAction {
+        self.inner
+            .as_ref()
+            .map_or(NavigationAction::Continue, |inner| inner.on_exit(cx))
+    }
+
+    fn can_deactivate(&self, cx: &App) -> NavigationAction {
+        self.can_deactivate_page(cx, None)
+    }
+
+    fn can_deactivate_page(&self, cx: &App, page: Option<&AnyView>) -> NavigationAction {
+        if let Some(inner) = &self.inner {
+            let action = inner.can_deactivate_page(cx, page);
+            if !matches!(action, NavigationAction::Continue) {
+                return action;
+            }
+        }
+        let Some(entity) = page.and_then(|view| view.clone().downcast::<T>().ok()) else {
+            return NavigationAction::Continue;
+        };
+        (self.check)(entity.read(cx), cx)
+    }
 }
 
 // ============================================================================

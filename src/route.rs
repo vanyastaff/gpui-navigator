@@ -135,7 +135,7 @@ impl NamedRouteRegistry {
     #[must_use]
     pub fn url_for(&self, name: &str, params: &RouteParams) -> Option<String> {
         let pattern = self.get(name)?;
-        Some(substitute_params(pattern, params))
+        crate::matcher::build_path(pattern, params)
     }
 
     /// Clear all registered routes
@@ -154,21 +154,6 @@ impl NamedRouteRegistry {
     pub fn is_empty(&self) -> bool {
         self.routes.is_empty()
     }
-}
-
-/// Substitute route parameters in a path pattern
-///
-/// Replaces `:param` with actual values from `RouteParams`
-fn substitute_params(pattern: &str, params: &RouteParams) -> String {
-    let mut result = pattern.to_string();
-
-    // Replace :param with actual values
-    for (key, value) in params.iter() {
-        let placeholder = format!(":{key}");
-        result = result.replace(&placeholder, value);
-    }
-
-    result
 }
 
 // ============================================================================
@@ -203,42 +188,10 @@ pub fn validate_route_path(path: &str) -> Result<(), String> {
     // Note: Trailing slashes are allowed for compatibility
     // They are normalized during route matching
 
-    // Extract and validate parameters
-    let mut param_names = std::collections::HashSet::new();
-    for segment in path.split('/') {
-        if let Some(param) = segment.strip_prefix(':') {
-            // Check parameter name is not empty
-            if param.is_empty() {
-                warn_log!("Invalid route path '{}': empty parameter name", path);
-                return Err("Route parameter name cannot be empty".to_string());
-            }
-
-            // Check for constraint syntax (:id{uuid})
-            let param_name = param.find('{').map_or(param, |pos| &param[..pos]);
-
-            // Check parameter name is alphanumeric
-            if !param_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                warn_log!(
-                    "Invalid route path '{}': parameter '{}' has invalid characters",
-                    path,
-                    param_name
-                );
-                return Err(format!(
-                    "Route parameter '{param_name}' must contain only alphanumeric characters and underscores"
-                ));
-            }
-
-            // Check for duplicate parameters
-            if !param_names.insert(param_name.to_string()) {
-                warn_log!(
-                    "Invalid route path '{}': duplicate parameter '{}'",
-                    path,
-                    param_name
-                );
-                return Err(format!("Duplicate route parameter: '{param_name}'"));
-            }
-        }
-    }
+    // Parameters, constraints, wildcard placement and duplicates
+    crate::matcher::validate_pattern(path).inspect_err(|err| {
+        warn_log!("Invalid route path '{}': {}", path, err);
+    })?;
 
     Ok(())
 }
@@ -397,6 +350,9 @@ fn component_cache_key<T: 'static>(path: &str, params: &RouteParams) -> String {
     pairs.sort();
     format!("route:{path}:{type_id:?}?{}", pairs.join("&"))
 }
+
+/// Route metadata key backing [`Route::keep_alive`].
+const KEEP_ALIVE_META: &str = "navigator:keep_alive";
 
 /// A single route in the navigation tree.
 ///
@@ -916,6 +872,72 @@ impl Route {
         self
     }
 
+    /// Ask the page itself whether it can be left.
+    ///
+    /// For routes created with `Route::component*`: before navigating away,
+    /// `check` receives the cached page entity, so it can look at the page's
+    /// own state (for example unsaved form input). Return
+    /// [`NavigationAction::deny`](crate::NavigationAction::deny) to stay.
+    ///
+    /// Composes with [`lifecycle`](Self::lifecycle) if that is set first.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use gpui_navigator::{NavigationAction, Route};
+    /// use gpui::*;
+    ///
+    /// struct EditorPage { dirty: bool }
+    ///
+    /// impl Render for EditorPage {
+    ///     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+    ///         div()
+    ///     }
+    /// }
+    ///
+    /// Route::component("/editor", || EditorPage { dirty: false })
+    ///     .can_leave(|page: &EditorPage, _cx| {
+    ///         if page.dirty {
+    ///             NavigationAction::deny("Unsaved changes")
+    ///         } else {
+    ///             NavigationAction::Continue
+    ///         }
+    ///     });
+    /// ```
+    pub fn can_leave<T, F>(mut self, check: F) -> Self
+    where
+        T: 'static,
+        F: Fn(&T, &App) -> crate::NavigationAction + Send + Sync + 'static,
+    {
+        let inner = self.lifecycle.take();
+        self.lifecycle = Some(Box::new(crate::lifecycle::PageLeaveCheck::<T, F>::new(
+            check, inner,
+        )));
+        self
+    }
+
+    /// Keep this route's page entity cached after navigating away (default `true`).
+    ///
+    /// With `keep_alive(false)`, a `Route::component*` page is dropped when the
+    /// user leaves it, so the next visit starts from a fresh state.
+    ///
+    /// Stored in the reserved route metadata key `navigator:keep_alive`.
+    pub fn keep_alive(mut self, keep: bool) -> Self {
+        self.config
+            .meta
+            .insert(KEEP_ALIVE_META.to_string(), keep.to_string());
+        self
+    }
+
+    /// Whether the page entity stays cached after navigating away.
+    #[must_use]
+    pub fn is_keep_alive(&self) -> bool {
+        self.config
+            .meta
+            .get(KEEP_ALIVE_META)
+            .is_none_or(|value| value != "false")
+    }
+
     /// Set the transition animation for this route
     ///
     /// # Example
@@ -1007,38 +1029,21 @@ impl std::fmt::Debug for Route {
 /// Supports:
 /// - Static paths: `/users`
 /// - Dynamic segments: `/users/:id`
-/// - Wildcard: `/files/*`
+/// - Constrained segments: `/users/:id<int>`
+/// - Wildcards: `/files/*` or `/files/*path`
+///
+/// The query string is ignored for matching and copied into [`RouteMatch::query`].
 fn match_path(pattern: &str, path: &str) -> Option<RouteMatch> {
-    let pattern_iter = pattern.split('/').filter(|s| !s.is_empty());
-    let mut path_iter = path.split('/').filter(|s| !s.is_empty());
+    let params = crate::matcher::match_full(pattern, path)?;
+    let (_, query) = crate::matcher::split_path_and_query(path);
 
     let mut route_match = RouteMatch::new(path.to_string());
-
-    for pattern_seg in pattern_iter {
-        if pattern_seg == "*" {
-            // Wildcard matches rest of path
-            return Some(route_match);
-        }
-
-        let Some(path_seg) = path_iter.next() else {
-            // Path exhausted before pattern — no match
-            return None;
-        };
-
-        if let Some(param_name) = pattern_seg.strip_prefix(':') {
-            route_match
-                .params
-                .insert(param_name.to_string(), path_seg.to_string());
-        } else if pattern_seg != path_seg {
-            return None;
+    route_match.params = params.all().clone();
+    for (key, values) in crate::QueryParams::from_query_string(query).iter() {
+        if let Some(first) = values.first() {
+            route_match.query.insert(key.clone(), first.clone());
         }
     }
-
-    // All pattern segments consumed — path must also be exhausted
-    if path_iter.next().is_some() {
-        return None;
-    }
-
     Some(route_match)
 }
 
@@ -1339,8 +1344,8 @@ mod tests {
         params.set("id".to_string(), "123".to_string());
         params.set("action".to_string(), "edit".to_string());
 
-        let result = substitute_params("/users/:id/:action", &params);
-        assert_eq!(result, "/users/123/edit");
+        let result = crate::matcher::build_path("/users/:id/:action", &params);
+        assert_eq!(result.as_deref(), Some("/users/123/edit"));
     }
 
     // Route tests

@@ -125,7 +125,7 @@ pub fn extract_param_name(segment: &'_ str) -> Cow<'_, str> {
     let without_colon = segment.trim_start_matches(':');
 
     // Check for constraint delimiter '<'
-    without_colon.find('<').map_or_else(
+    without_colon.find(['<', '{']).map_or_else(
         || Cow::Borrowed(without_colon),
         |pos| Cow::Owned(without_colon[..pos].to_string()),
     )

@@ -42,6 +42,14 @@
 use crate::lifecycle::NavigationAction;
 use crate::NavigationRequest;
 use gpui::App;
+use std::future::Future;
+use std::pin::Pin;
+
+/// Future returned by an asynchronous guard check.
+///
+/// It runs on GPUI's foreground executor, so it does not need to be `Send`.
+/// Move slow work (network, disk) to `cx.background_executor()` before awaiting it.
+pub type GuardFuture = Pin<Box<dyn Future<Output = NavigationAction>>>;
 
 // ============================================================================
 // RouteGuard trait
@@ -101,6 +109,89 @@ pub trait RouteGuard: Send + Sync + 'static {
     fn priority(&self) -> i32 {
         0
     }
+
+    /// Optional asynchronous part of the check.
+    ///
+    /// Called after every synchronous [`check`](Self::check) on the target
+    /// route has returned [`NavigationAction::Continue`]. Returning `Some`
+    /// makes the navigation pending: the router keeps showing the current page
+    /// until the future resolves, then continues (or blocks/redirects) based
+    /// on its result. A newer navigation cancels a pending one.
+    ///
+    /// Async guards only run when navigating through [`Navigator`](crate::Navigator)
+    /// or [`navigate`](crate::navigate), which own the `App` needed to spawn
+    /// the future. Most guards should use [`async_guard_fn`] instead of
+    /// implementing this directly.
+    fn check_async(&self, _cx: &App, _request: &NavigationRequest) -> Option<GuardFuture> {
+        None
+    }
+}
+
+// ============================================================================
+// async_guard_fn helper
+// ============================================================================
+
+/// Create an asynchronous guard from a closure returning a future.
+///
+/// The closure runs synchronously with `&App` (read whatever state you need
+/// there) and returns a `'static` future that decides the navigation.
+///
+/// # Example
+///
+/// ```no_run
+/// use gpui_navigator::{async_guard_fn, NavigationAction};
+///
+/// let session_guard = async_guard_fn(|_cx, _request| async move {
+///     let session_valid = true; // e.g. await a token refresh
+///     if session_valid {
+///         NavigationAction::Continue
+///     } else {
+///         NavigationAction::redirect("/login")
+///     }
+/// });
+/// ```
+pub const fn async_guard_fn<F, Fut>(f: F) -> AsyncFnGuard<F>
+where
+    F: Fn(&App, &NavigationRequest) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = NavigationAction> + 'static,
+{
+    AsyncFnGuard { f }
+}
+
+/// Asynchronous guard created by [`async_guard_fn`].
+pub struct AsyncFnGuard<F> {
+    f: F,
+}
+
+impl<F, Fut> RouteGuard for AsyncFnGuard<F>
+where
+    F: Fn(&App, &NavigationRequest) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = NavigationAction> + 'static,
+{
+    fn check(&self, _cx: &App, _request: &NavigationRequest) -> NavigationAction {
+        NavigationAction::Continue
+    }
+
+    fn check_async(&self, cx: &App, request: &NavigationRequest) -> Option<GuardFuture> {
+        Some(Box::pin((self.f)(cx, request)))
+    }
+
+    fn name(&self) -> &'static str {
+        "AsyncFnGuard"
+    }
+}
+
+/// Run guard futures one after another; the first non-`Continue` result wins.
+pub(crate) fn sequence_guard_futures(futures: Vec<GuardFuture>) -> GuardFuture {
+    Box::pin(async move {
+        for future in futures {
+            let action = future.await;
+            if !matches!(action, NavigationAction::Continue) {
+                return action;
+            }
+        }
+        NavigationAction::Continue
+    })
 }
 
 // ============================================================================
@@ -418,6 +509,16 @@ impl RouteGuard for Guards {
         NavigationAction::Continue
     }
 
+    fn check_async(&self, cx: &App, request: &NavigationRequest) -> Option<GuardFuture> {
+        let mut sorted: Vec<_> = self.guards.iter().collect();
+        sorted.sort_by_key(|g| std::cmp::Reverse(g.priority()));
+        let futures: Vec<GuardFuture> = sorted
+            .into_iter()
+            .filter_map(|guard| guard.check_async(cx, request))
+            .collect();
+        (!futures.is_empty()).then(|| sequence_guard_futures(futures))
+    }
+
     fn name(&self) -> &'static str {
         "Guards"
     }
@@ -498,6 +599,19 @@ impl RouteGuard for NotGuard {
             NavigationAction::Deny { .. } => NavigationAction::Continue,
             redirect @ NavigationAction::Redirect { .. } => redirect,
         }
+    }
+
+    fn check_async(&self, cx: &App, request: &NavigationRequest) -> Option<GuardFuture> {
+        let inner = self.guard.check_async(cx, request)?;
+        Some(Box::pin(async move {
+            match inner.await {
+                NavigationAction::Continue => {
+                    NavigationAction::deny("Inverted: guard allowed but NOT expected")
+                }
+                NavigationAction::Deny { .. } => NavigationAction::Continue,
+                redirect @ NavigationAction::Redirect { .. } => redirect,
+            }
+        }))
     }
 
     fn name(&self) -> &'static str {

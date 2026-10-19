@@ -59,6 +59,13 @@ pub enum NavigationResult {
     },
     /// Navigation error
     Error(NavigationError),
+    /// Navigation is waiting on async guards (see
+    /// [`RouteGuard::check_async`](crate::RouteGuard::check_async)). The
+    /// current page stays until they resolve.
+    Pending {
+        /// The path being navigated to.
+        path: String,
+    },
 }
 
 /// Detailed error variants that can occur during navigation.
@@ -146,6 +153,12 @@ impl NavigationResult {
     #[must_use]
     pub const fn is_error(&self) -> bool {
         matches!(self, Self::Error(_))
+    }
+
+    /// Check if navigation is waiting on async guards
+    #[must_use]
+    pub const fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending { .. })
     }
 
     /// Get redirect path if blocked with redirect
