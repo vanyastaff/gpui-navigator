@@ -182,8 +182,6 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    # Advisories come from gpui's own dependency tree, which this crate can't change; report without blocking.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -191,4 +189,6 @@ jobs:
         run: cargo install cargo-audit
 
       - name: Run security audit
+        # Advisories come from gpui's own dependency tree, which this crate can't change; report without blocking.
+        continue-on-error: true
         run: cargo audit
