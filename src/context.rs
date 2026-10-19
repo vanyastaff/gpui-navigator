@@ -32,24 +32,26 @@ use crate::cache::{CacheStats, RouteCache};
 use crate::error::{ErrorHandlers, NavigationResult};
 use crate::history::{HistoryEntry, HistoryState};
 use crate::lifecycle::NavigationAction;
-use crate::nested::trim_slashes;
 use crate::resolve::{resolve_match_stack, MatchStack};
 use crate::route::NamedRouteRegistry;
 #[cfg(feature = "transition")]
 use crate::transition::Transition;
 use crate::{
-    debug_log, error_log, info_log, trace_log, warn_log, IntoRoute, Route, RouteParams, RouterState,
+    debug_log, error_log, info_log, trace_log, warn_log, IntoRoute, QueryParams, Route,
+    RouteParams, RouterState,
 };
 use gpui::{AnyView, App, BorrowAppContext, Global};
 use std::borrow::BorrowMut;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// Maximum redirect depth to prevent infinite redirect loops.
 const MAX_REDIRECT_DEPTH: usize = 5;
 
-/// Maximum number of cached component views before FIFO eviction kicks in.
-const MAX_COMPONENT_CACHE: usize = 128;
+/// Default number of cached component views before LRU eviction kicks in.
+pub const DEFAULT_COMPONENT_CACHE_CAPACITY: usize = 128;
 
 // ============================================================================
 // NavigationRequest
@@ -144,13 +146,25 @@ pub struct GlobalRouter {
     /// persists across navigations so that component state survives when the
     /// user navigates away and back.
     ///
-    /// Capped at `MAX_COMPONENT_CACHE` entries. Oldest entries are evicted
-    /// when the limit is reached (FIFO order via `VecDeque` of keys).
-    component_cache: HashMap<String, AnyView>,
-    /// Insertion-order tracking for FIFO eviction of `component_cache`.
-    component_cache_order: std::collections::VecDeque<String>,
+    /// Capped at `component_cache_capacity` entries; the least recently
+    /// rendered entry is evicted when the limit is reached.
+    component_cache: HashMap<String, CachedComponent>,
+    component_cache_capacity: usize,
+    /// Logical clock for LRU bookkeeping of `component_cache`.
+    cache_clock: Cell<u64>,
     /// Custom error handlers for 404 and navigation errors.
     error_handlers: ErrorHandlers,
+    /// Navigation waiting on async guards.
+    pending: Option<PendingNavigation>,
+    /// Id source for pending navigations.
+    nav_seq: u64,
+    /// Incremented on every completed navigation.
+    change_seq: u64,
+    /// The last completed navigation.
+    last_change: Option<crate::RouteChangeEvent>,
+    /// Flip slide transitions when navigating back.
+    #[cfg(feature = "transition")]
+    reverse_transitions_on_back: bool,
 }
 
 impl GlobalRouter {
@@ -187,22 +201,32 @@ impl GlobalRouter {
     /// also registered in the [`NamedRouteRegistry`] for URL generation via
     /// [`url_for`](Self::url_for).
     pub fn add_route(&mut self, route: Route) {
-        if let Some(name) = &route.config.name {
-            info_log!(
-                "Registered route '{}' (name: '{}')",
-                route.config.path,
-                name
-            );
-            self.named_routes
-                .register(name.clone(), route.config.path.clone());
-        } else {
-            info_log!("Registered route '{}'", route.config.path);
-        }
+        info_log!("Registered route '{}'", route.config.path);
+        warn_shadowed(self.state.routes(), &route);
+        self.register_names(&route, "");
         self.state.add_route(route);
         #[cfg(feature = "cache")]
         self.nested_cache.clear();
         // Re-resolve match stack after adding routes
         self.re_resolve();
+    }
+
+    /// Register the names of `route` and its (named-outlet) children, using
+    /// each route's full path so `url_for` works for nested routes too.
+    fn register_names(&mut self, route: &Route, parent_path: &str) {
+        let full_path = crate::nested::build_child_path(parent_path, &route.config.path);
+        let full_path = crate::nested::normalize_path(&full_path).into_owned();
+        if let Some(name) = &route.config.name {
+            debug_log!("Route name '{}' → '{}'", name, full_path);
+            self.named_routes.register(name.clone(), full_path.clone());
+        }
+        for child in route
+            .children
+            .iter()
+            .chain(route.named_children.values().flatten())
+        {
+            self.register_names(child, &full_path);
+        }
     }
 
     // ========================================================================
@@ -218,46 +242,40 @@ impl GlobalRouter {
     /// 4. Perform actual navigation
     /// 5. Run `after_navigation` middleware
     pub fn push(&mut self, path: String, cx: &App) -> NavigationResult {
-        self.navigate_with_pipeline(path, cx, NavigateOp::Push, 0)
+        self.navigate_with_pipeline(NavIntent::new(path, NavigateOp::Push), cx, 0)
     }
 
     /// Replace current path, running the full guard/middleware pipeline.
     pub fn replace(&mut self, path: String, cx: &App) -> NavigationResult {
-        self.navigate_with_pipeline(path, cx, NavigateOp::Replace, 0)
+        self.navigate_with_pipeline(NavIntent::new(path, NavigateOp::Replace), cx, 0)
     }
 
     /// Go back in history, checking guards on the target route.
     pub fn back(&mut self, cx: &App) -> Option<NavigationResult> {
         let target = self.state.peek_back_path()?.to_string();
-        Some(self.navigate_with_pipeline(target, cx, NavigateOp::Back, 0))
+        Some(self.navigate_with_pipeline(NavIntent::new(target, NavigateOp::Back), cx, 0))
     }
 
     /// Go forward in history, checking guards on the target route.
     pub fn forward(&mut self, cx: &App) -> Option<NavigationResult> {
         let target = self.state.peek_forward_path()?.to_string();
-        Some(self.navigate_with_pipeline(target, cx, NavigateOp::Forward, 0))
+        Some(self.navigate_with_pipeline(NavIntent::new(target, NavigateOp::Forward), cx, 0))
     }
 
     /// Push a new path with associated [`HistoryState`] data, running the full pipeline.
     ///
-    /// Allows attaching arbitrary key-value state (scroll position, form data, etc.)
-    /// to the history entry. The pipeline (guards, middleware) runs first; state
-    /// is only attached if navigation succeeds.
+    /// Allows attaching arbitrary state (scroll position, form data, typed values)
+    /// to the history entry. The state is only stored if the navigation lands on
+    /// `path`; it is dropped when a guard redirects elsewhere.
     pub fn push_with_state(
         &mut self,
         path: String,
         state: HistoryState,
         cx: &App,
     ) -> NavigationResult {
-        // Run the pipeline first (guards, middleware, etc.)
-        // We use the normal push pipeline, then retroactively attach state
-        let result = self.navigate_with_pipeline(path, cx, NavigateOp::Push, 0);
-        if matches!(result, NavigationResult::Success { .. }) {
-            // Attach state to the current history entry
-            let current_path = self.state.current_path().to_string();
-            self.state.replace_with_state(current_path, state);
-        }
-        result
+        let mut intent = NavIntent::new(path, NavigateOp::Push);
+        intent.state = Some(state);
+        self.navigate_with_pipeline(intent, cx, 0)
     }
 
     /// Replace current path with associated [`HistoryState`] data, running the full pipeline.
@@ -267,12 +285,35 @@ impl GlobalRouter {
         state: HistoryState,
         cx: &App,
     ) -> NavigationResult {
-        let result = self.navigate_with_pipeline(path, cx, NavigateOp::Replace, 0);
-        if matches!(result, NavigationResult::Success { .. }) {
-            let current_path = self.state.current_path().to_string();
-            self.state.replace_with_state(current_path, state);
+        let mut intent = NavIntent::new(path, NavigateOp::Replace);
+        intent.state = Some(state);
+        self.navigate_with_pipeline(intent, cx, 0)
+    }
+
+    /// Capture the navigation history, e.g. to persist it on quit.
+    #[must_use]
+    pub fn history_snapshot(&self) -> crate::history::HistorySnapshot {
+        crate::history::HistorySnapshot::of(self.state.history())
+    }
+
+    /// Restore a history snapshot and show its current entry.
+    ///
+    /// Guards and lifecycle hooks are not run (this restores a previous
+    /// session rather than navigating). Returns `false` and changes nothing
+    /// if the snapshot is empty or its cursor is out of range.
+    pub fn restore_history(&mut self, snapshot: crate::history::HistorySnapshot) -> bool {
+        if !self.state.restore_history(snapshot) {
+            return false;
         }
-        result
+        self.cancel_pending();
+        #[cfg(feature = "cache")]
+        self.nested_cache.clear();
+        #[cfg(feature = "transition")]
+        {
+            self.previous_stack = None;
+        }
+        self.re_resolve();
+        true
     }
 
     /// Return the current [`HistoryEntry`] (path + optional state data).
@@ -282,13 +323,25 @@ impl GlobalRouter {
     }
 
     /// Core navigation method that runs the full pipeline.
+    ///
+    /// Pipeline:
+    /// 1. Resolve the target path into a match stack
+    /// 2. Guards of every matched level (sync, then async → `Pending`)
+    /// 3. `can_deactivate` on every level being left (leaf first)
+    /// 4. `on_exit` on every level being left (leaf first)
+    /// 5. `before_navigation` middleware of the target levels
+    /// 6. History update + match stack swap
+    /// 7. `on_enter` on every level being entered (root first); a deny rolls
+    ///    the navigation back
+    /// 8. `after_navigation` middleware of the target levels
+    #[allow(clippy::too_many_lines)]
     fn navigate_with_pipeline(
         &mut self,
-        path: String,
+        intent: NavIntent,
         cx: &App,
-        op: NavigateOp,
         redirect_depth: usize,
     ) -> NavigationResult {
+        let path = intent.path.clone();
         if redirect_depth >= MAX_REDIRECT_DEPTH {
             error_log!(
                 "Redirect loop detected (depth {}) navigating to '{}'",
@@ -301,17 +354,24 @@ impl GlobalRouter {
             };
         }
 
+        // Any new navigation supersedes one that is waiting on async guards.
+        if !intent.resumed {
+            self.cancel_pending();
+        }
+
         let from = self.current_path().to_string();
-        info_log!("Navigation {:?}: '{}' → '{}'", op, from, path);
+        info_log!("Navigation {:?}: '{}' → '{}'", intent.op, from, path);
+
+        let target_stack = resolve_match_stack(self.state.routes(), &path);
 
         // Build request — used by guards, lifecycle hooks, and middleware
-        let request = NavigationRequest::with_from(path.clone(), from.clone());
+        let request = NavigationRequest::with_from(path.clone(), from.clone())
+            .with_params(target_stack.params());
 
         // Step 1: Run guards
         #[cfg(feature = "guard")]
         {
-            let guard_result = self.run_guards(cx, &request);
-            match guard_result {
+            match Self::run_guards(&target_stack, cx, &request) {
                 NavigationAction::Continue => {}
                 NavigationAction::Deny { reason } => {
                     warn_log!("Navigation to '{}' blocked: {}", path, reason);
@@ -328,17 +388,40 @@ impl GlobalRouter {
                         reason
                     );
                     return self.navigate_with_pipeline(
-                        to,
+                        intent.redirect(to),
                         cx,
-                        NavigateOp::Push,
                         redirect_depth + 1,
                     );
                 }
             }
+
+            if !intent.resumed {
+                let futures = Self::collect_async_guards(&target_stack, cx, &request);
+                if !futures.is_empty() {
+                    debug_log!(
+                        "Navigation to '{}' waits on {} async guard(s)",
+                        path,
+                        futures.len()
+                    );
+                    self.nav_seq += 1;
+                    self.pending = Some(PendingNavigation {
+                        id: self.nav_seq,
+                        intent,
+                        redirect_depth,
+                        future: Rc::new(RefCell::new(Some(crate::guards::sequence_guard_futures(
+                            futures,
+                        )))),
+                    });
+                    return NavigationResult::Pending { path };
+                }
+            }
         }
 
-        // Step 2: Check if current route allows deactivation (lifecycle)
-        match self.run_lifecycle_can_deactivate(cx) {
+        // Levels that stay mounted are shared; everything below them is left/entered.
+        let common = common_prefix_len(&self.match_stack, &target_stack);
+
+        // Step 2: Check if the levels being left allow deactivation (leaf first)
+        match self.run_lifecycle_can_deactivate(common, cx) {
             NavigationAction::Continue => {}
             NavigationAction::Deny { reason } => {
                 warn_log!(
@@ -352,16 +435,12 @@ impl GlobalRouter {
                 };
             }
             NavigationAction::Redirect { to, .. } => {
-                return self.navigate_with_pipeline(to, cx, NavigateOp::Push, redirect_depth + 1);
+                return self.navigate_with_pipeline(intent.redirect(to), cx, redirect_depth + 1);
             }
         }
 
-        // Step 3: Run before middleware
-        #[cfg(feature = "middleware")]
-        self.run_middleware_before(cx, &request);
-
-        // Step 4: Run on_exit lifecycle on current route
-        if let NavigationAction::Deny { reason } = self.run_lifecycle_on_exit(cx) {
+        // Step 3: Run on_exit on the levels being left (leaf first)
+        if let NavigationAction::Deny { reason } = self.run_lifecycle_on_exit(common, cx) {
             warn_log!("Lifecycle on_exit blocked leaving '{}': {}", from, reason);
             return NavigationResult::Blocked {
                 reason,
@@ -369,31 +448,62 @@ impl GlobalRouter {
             };
         }
 
-        // Step 5: Perform actual navigation + resolve match stack
-        let event = match self.perform_navigation(path, op) {
+        // Step 4: Run before middleware
+        #[cfg(feature = "middleware")]
+        Self::run_middleware_before(&target_stack, cx, &request);
+
+        // Snapshot for rollback, only when an on_enter hook could deny
+        let entering_has_hooks = target_stack.entries()[common..]
+            .iter()
+            .any(|entry| entry.route.lifecycle.is_some());
+        let snapshot = entering_has_hooks.then(|| self.snapshot());
+
+        let release_after = self.departing_non_keep_alive(common);
+
+        // Step 5: Perform actual navigation + swap in the resolved match stack
+        let event = match self.perform_navigation(&intent, target_stack) {
             Ok(event) => event,
             Err(result) => return result,
         };
 
-        // Step 6: Run on_enter lifecycle on new route
-        match self.run_lifecycle_on_enter(cx, &request) {
+        // Step 6: Run on_enter on the levels being entered (root first)
+        match self.run_lifecycle_on_enter(common, cx, &request) {
             NavigationAction::Continue => {}
             NavigationAction::Deny { reason } => {
-                // Navigation already happened — log warning but don't revert
                 warn_log!(
                     "Lifecycle on_enter denied entry to '{}': {}",
                     event.to,
                     reason
                 );
+                if let Some(snapshot) = snapshot {
+                    self.restore(snapshot);
+                }
+                return NavigationResult::Blocked {
+                    reason,
+                    redirect: None,
+                };
             }
             NavigationAction::Redirect { to, .. } => {
-                return self.navigate_with_pipeline(to, cx, NavigateOp::Push, redirect_depth + 1);
+                return self.navigate_with_pipeline(
+                    NavIntent::new(to, NavigateOp::Replace),
+                    cx,
+                    redirect_depth + 1,
+                );
             }
         }
 
         // Step 7: Run after middleware
         #[cfg(feature = "middleware")]
-        self.run_middleware_after(cx, &request);
+        Self::run_middleware_after(&self.match_stack, cx, &request);
+
+        for route_path in release_after {
+            let dropped = self.evict_components(&route_path);
+            if dropped > 0 {
+                debug_log!("Released {} component(s) of '{}'", dropped, route_path);
+            }
+        }
+        self.change_seq += 1;
+        self.last_change = Some(event.clone());
 
         info_log!(
             "Navigation complete: '{}' (stack depth: {})",
@@ -407,14 +517,14 @@ impl GlobalRouter {
     // Navigation execution
     // ========================================================================
 
-    /// Perform the actual history mutation, cache clear, and match stack resolution.
+    /// Perform the actual history mutation, cache clear, and match stack swap.
     ///
     /// Returns `Ok(RouteChangeEvent)` on success, `Err(NavigationResult)` if the
     /// history operation fails unexpectedly.
     fn perform_navigation(
         &mut self,
-        path: String,
-        op: NavigateOp,
+        intent: &NavIntent,
+        target_stack: MatchStack,
     ) -> Result<crate::RouteChangeEvent, NavigationResult> {
         #[cfg(feature = "cache")]
         self.nested_cache.clear();
@@ -424,16 +534,19 @@ impl GlobalRouter {
             self.previous_stack = Some(self.match_stack.clone());
         }
 
-        let event = match op {
-            NavigateOp::Push => self.state.push(path),
-            NavigateOp::Replace => self.state.replace(path),
-            NavigateOp::Back => self.state.back().ok_or_else(|| {
+        let path = intent.path.clone();
+        let event = match (intent.op, intent.state.clone()) {
+            (NavigateOp::Push, None) => self.state.push(path),
+            (NavigateOp::Push, Some(state)) => self.state.push_with_state(path, state),
+            (NavigateOp::Replace, None) => self.state.replace(path),
+            (NavigateOp::Replace, Some(state)) => self.state.replace_with_state(path, state),
+            (NavigateOp::Back, _) => self.state.back().ok_or_else(|| {
                 error_log!("back() returned None after peek succeeded");
                 NavigationResult::Error(crate::error::NavigationError::NavigationFailed {
                     message: "History back failed unexpectedly".into(),
                 })
             })?,
-            NavigateOp::Forward => self.state.forward().ok_or_else(|| {
+            (NavigateOp::Forward, _) => self.state.forward().ok_or_else(|| {
                 error_log!("forward() returned None after peek succeeded");
                 NavigationResult::Error(crate::error::NavigationError::NavigationFailed {
                     message: "History forward failed unexpectedly".into(),
@@ -441,39 +554,161 @@ impl GlobalRouter {
             })?,
         };
 
-        self.match_stack = resolve_match_stack(self.state.routes(), self.state.current_path());
+        self.match_stack = target_stack;
         Ok(event)
+    }
+
+    fn snapshot(&self) -> RouterSnapshot {
+        RouterSnapshot {
+            state: self.state.clone(),
+            match_stack: self.match_stack.clone(),
+            #[cfg(feature = "transition")]
+            previous_stack: self.previous_stack.clone(),
+        }
+    }
+
+    fn restore(&mut self, snapshot: RouterSnapshot) {
+        self.state = snapshot.state;
+        self.match_stack = snapshot.match_stack;
+        #[cfg(feature = "transition")]
+        {
+            self.previous_stack = snapshot.previous_stack;
+        }
+    }
+
+    // ========================================================================
+    // Async guards
+    // ========================================================================
+
+    /// Collect the async parts of the target levels' guards (highest priority first).
+    #[cfg(feature = "guard")]
+    fn collect_async_guards(
+        target_stack: &MatchStack,
+        cx: &App,
+        request: &NavigationRequest,
+    ) -> Vec<crate::guards::GuardFuture> {
+        let mut guards: Vec<&dyn crate::guards::RouteGuard> = target_stack
+            .entries()
+            .iter()
+            .flat_map(|entry| entry.route.guards.iter().map(AsRef::as_ref))
+            .collect();
+        guards.sort_by_key(|guard| std::cmp::Reverse(guard.priority()));
+        guards
+            .into_iter()
+            .filter_map(|guard| guard.check_async(cx, request))
+            .collect()
+    }
+
+    /// Drop a navigation that is waiting on async guards.
+    fn cancel_pending(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            debug_log!("Cancelling pending navigation to '{}'", pending.intent.path);
+        }
+    }
+
+    /// Path of the navigation currently waiting on async guards, if any.
+    #[must_use]
+    pub fn pending_path(&self) -> Option<&str> {
+        self.pending.as_ref().map(|p| p.intent.path.as_str())
+    }
+
+    /// Return `true` while a navigation is waiting on async guards.
+    #[must_use]
+    pub const fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Take the future of the pending navigation, to be driven by the caller.
+    fn take_pending_future(&self) -> Option<(u64, crate::guards::GuardFuture)> {
+        let pending = self.pending.as_ref()?;
+        let future = RefCell::borrow_mut(&pending.future).take()?;
+        Some((pending.id, future))
+    }
+
+    /// Continue a pending navigation once its async guards resolved.
+    ///
+    /// Returns `None` if the navigation was superseded in the meantime.
+    fn resume_pending(
+        &mut self,
+        id: u64,
+        action: NavigationAction,
+        cx: &App,
+    ) -> Option<NavigationResult> {
+        if self.pending.as_ref().is_none_or(|p| p.id != id) {
+            debug_log!("Async guard result for superseded navigation ignored");
+            return None;
+        }
+        let pending = self.pending.take()?;
+        let result = match action {
+            NavigationAction::Continue => {
+                let mut intent = pending.intent;
+                intent.resumed = true;
+                self.navigate_with_pipeline(intent, cx, pending.redirect_depth)
+            }
+            NavigationAction::Deny { reason } => {
+                warn_log!(
+                    "Async guard blocked navigation to '{}': {}",
+                    pending.intent.path,
+                    reason
+                );
+                NavigationResult::Blocked {
+                    reason,
+                    redirect: None,
+                }
+            }
+            NavigationAction::Redirect { to, .. } => self.navigate_with_pipeline(
+                pending.intent.redirect(to),
+                cx,
+                pending.redirect_depth + 1,
+            ),
+        };
+        Some(result)
     }
 
     // ========================================================================
     // Lifecycle hooks
     // ========================================================================
 
-    /// Run `can_deactivate` on the current route's lifecycle (if any).
-    fn run_lifecycle_can_deactivate(&self, cx: &App) -> NavigationAction {
-        if let Some(current_route) = self.state.current_route() {
-            if let Some(ref lifecycle) = current_route.lifecycle {
-                return lifecycle.can_deactivate(cx);
+    /// Run `can_deactivate` on every level being left, leaf first.
+    fn run_lifecycle_can_deactivate(&self, common: usize, cx: &App) -> NavigationAction {
+        for entry in self.match_stack.entries()[common..].iter().rev() {
+            if let Some(ref lifecycle) = entry.route.lifecycle {
+                let page = self.page_view(entry);
+                let action = lifecycle.can_deactivate_page(cx, page);
+                if !matches!(action, NavigationAction::Continue) {
+                    return action;
+                }
             }
         }
         NavigationAction::Continue
     }
 
-    /// Run `on_exit` on the current route's lifecycle (if any).
-    fn run_lifecycle_on_exit(&self, cx: &App) -> NavigationAction {
-        if let Some(current_route) = self.state.current_route() {
-            if let Some(ref lifecycle) = current_route.lifecycle {
-                return lifecycle.on_exit(cx);
+    /// Run `on_exit` on every level being left, leaf first.
+    fn run_lifecycle_on_exit(&self, common: usize, cx: &App) -> NavigationAction {
+        for entry in self.match_stack.entries()[common..].iter().rev() {
+            if let Some(ref lifecycle) = entry.route.lifecycle {
+                let action = lifecycle.on_exit(cx);
+                if !matches!(action, NavigationAction::Continue) {
+                    return action;
+                }
             }
         }
         NavigationAction::Continue
     }
 
-    /// Run `on_enter` on the new route's lifecycle (if any).
-    fn run_lifecycle_on_enter(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
-        if let Some(leaf) = self.match_stack.leaf() {
-            if let Some(ref lifecycle) = leaf.route.lifecycle {
-                return lifecycle.on_enter(cx, request);
+    /// Run `on_enter` on every level being entered, root first.
+    fn run_lifecycle_on_enter(
+        &self,
+        common: usize,
+        cx: &App,
+        request: &NavigationRequest,
+    ) -> NavigationAction {
+        for entry in &self.match_stack.entries()[common..] {
+            if let Some(ref lifecycle) = entry.route.lifecycle {
+                let action = lifecycle.on_enter(cx, request);
+                if !matches!(action, NavigationAction::Continue) {
+                    return action;
+                }
             }
         }
         NavigationAction::Continue
@@ -481,31 +716,34 @@ impl GlobalRouter {
 
     /// Collect and run guards for the target path.
     ///
-    /// Walks the route tree to find the target route, collecting guards from
-    /// every ancestor route along the way. Guards on parent routes also protect
-    /// child routes (e.g. an `AuthGuard` on `/dashboard` also guards `/dashboard/settings`).
+    /// Guards are taken from every level of the target's match stack, so a
+    /// guard on a parent route also protects its children (e.g. an `AuthGuard`
+    /// on `/dashboard` also guards `/dashboard/settings`), and only routes that
+    /// actually match contribute guards.
     #[cfg(feature = "guard")]
-    fn run_guards(&self, cx: &App, request: &NavigationRequest) -> NavigationAction {
-        let path = trim_slashes(&request.to);
-        let mut guards: Vec<(&dyn crate::guards::RouteGuard, i32)> = Vec::new();
-
-        // Collect guards from matching routes (including ancestor routes)
-        for route in self.state.routes() {
-            Self::collect_guards_recursive(route, path, "", &mut guards);
-        }
+    fn run_guards(
+        target_stack: &MatchStack,
+        cx: &App,
+        request: &NavigationRequest,
+    ) -> NavigationAction {
+        let mut guards: Vec<&dyn crate::guards::RouteGuard> = target_stack
+            .entries()
+            .iter()
+            .flat_map(|entry| entry.route.guards.iter().map(AsRef::as_ref))
+            .collect();
 
         // Sort by priority (higher first)
-        guards.sort_by_key(|(_, prio)| std::cmp::Reverse(*prio));
+        guards.sort_by_key(|guard| std::cmp::Reverse(guard.priority()));
 
-        debug_log!("Collected {} guards for '{}'", guards.len(), path);
+        debug_log!("Collected {} guards for '{}'", guards.len(), request.to);
 
         // Check each guard — first non-Continue result wins
-        for (guard, prio) in &guards {
+        for guard in guards {
             let result = guard.check(cx, request);
             trace_log!(
                 "Guard '{}' (priority {}) → {:?}",
                 guard.name(),
-                prio,
+                guard.priority(),
                 result
             );
             if !matches!(result, NavigationAction::Continue) {
@@ -521,41 +759,30 @@ impl GlobalRouter {
         NavigationAction::Continue
     }
 
-    /// Recursively walk the route tree, collecting guards from routes that match
-    /// the given path (as exact match or prefix).
-    #[cfg(feature = "guard")]
-    fn collect_guards_recursive<'a>(
-        route: &'a Arc<Route>,
-        path: &str,
-        accumulated: &str,
-        out: &mut Vec<(&'a dyn crate::guards::RouteGuard, i32)>,
-    ) {
-        walk_matching_routes(route, path, accumulated, &mut |r, _full| {
-            for guard in &r.guards {
-                out.push((guard.as_ref(), guard.priority()));
-            }
-        });
+    /// Middleware of every level of `stack`, with their priorities.
+    #[cfg(feature = "middleware")]
+    fn collect_middleware(stack: &MatchStack) -> Vec<&dyn crate::middleware::RouteMiddleware> {
+        stack
+            .entries()
+            .iter()
+            .flat_map(|entry| entry.route.middleware.iter().map(AsRef::as_ref))
+            .collect()
     }
 
-    /// Run `before_navigation` on all middleware attached to matching routes.
+    /// Run `before_navigation` on all middleware attached to the target levels.
     #[cfg(feature = "middleware")]
-    fn run_middleware_before(&self, cx: &App, request: &NavigationRequest) {
-        let path = trim_slashes(&request.to);
-        let mut middleware: Vec<(&dyn crate::middleware::RouteMiddleware, i32)> = Vec::new();
-
-        for route in self.state.routes() {
-            Self::collect_middleware_recursive(route, path, "", &mut middleware);
-        }
+    fn run_middleware_before(target_stack: &MatchStack, cx: &App, request: &NavigationRequest) {
+        let mut middleware = Self::collect_middleware(target_stack);
 
         // Sort by priority (higher first for before)
-        middleware.sort_by_key(|(_, prio)| std::cmp::Reverse(*prio));
+        middleware.sort_by_key(|mw| std::cmp::Reverse(mw.priority()));
 
         debug_log!(
             "Running {} before-middleware for '{}'",
             middleware.len(),
             request.to
         );
-        for (mw, _) in &middleware {
+        for mw in middleware {
             trace_log!(
                 "Middleware '{}' before_navigation for '{}'",
                 mw.name(),
@@ -565,25 +792,20 @@ impl GlobalRouter {
         }
     }
 
-    /// Run `after_navigation` on all middleware attached to matching routes.
+    /// Run `after_navigation` on all middleware attached to the target levels.
     #[cfg(feature = "middleware")]
-    fn run_middleware_after(&self, cx: &App, request: &NavigationRequest) {
-        let path = trim_slashes(&request.to);
-        let mut middleware: Vec<(&dyn crate::middleware::RouteMiddleware, i32)> = Vec::new();
-
-        for route in self.state.routes() {
-            Self::collect_middleware_recursive(route, path, "", &mut middleware);
-        }
+    fn run_middleware_after(target_stack: &MatchStack, cx: &App, request: &NavigationRequest) {
+        let mut middleware = Self::collect_middleware(target_stack);
 
         // Sort by priority ascending for after (reverse of before — stack-like)
-        middleware.sort_by_key(|(_, prio)| *prio);
+        middleware.sort_by_key(|mw| mw.priority());
 
         debug_log!(
             "Running {} after-middleware for '{}'",
             middleware.len(),
             request.to
         );
-        for (mw, _) in &middleware {
+        for mw in middleware {
             trace_log!(
                 "Middleware '{}' after_navigation for '{}'",
                 mw.name(),
@@ -591,21 +813,6 @@ impl GlobalRouter {
             );
             mw.after_navigation(cx, request);
         }
-    }
-
-    /// Recursively collect middleware from matching routes.
-    #[cfg(feature = "middleware")]
-    fn collect_middleware_recursive<'a>(
-        route: &'a Arc<Route>,
-        path: &str,
-        accumulated: &str,
-        out: &mut Vec<(&'a dyn crate::middleware::RouteMiddleware, i32)>,
-    ) {
-        walk_matching_routes(route, path, accumulated, &mut |r, _full| {
-            for mw in &r.middleware {
-                out.push((mw.as_ref(), mw.priority()));
-            }
-        });
     }
 
     // ========================================================================
@@ -643,10 +850,16 @@ impl GlobalRouter {
     // Accessors
     // ========================================================================
 
-    /// Return the current navigation path.
+    /// Return the current navigation path (including any query string).
     #[must_use]
     pub fn current_path(&self) -> &str {
         self.state.current_path()
+    }
+
+    /// Query parameters of the current location.
+    #[must_use]
+    pub fn current_query(&self) -> QueryParams {
+        QueryParams::from_location(self.state.current_path())
     }
 
     /// Get current route match (with caching, requires mutable).
@@ -712,7 +925,6 @@ impl GlobalRouter {
     }
 
     /// Get a reference to the current error handlers.
-    #[must_use]
     pub const fn error_handlers(&self) -> &ErrorHandlers {
         &self.error_handlers
     }
@@ -721,26 +933,125 @@ impl GlobalRouter {
     // Component cache
     // ========================================================================
 
-    /// Get a cached component view by key.
+    /// Get a cached component view by key, marking it as recently used.
     #[must_use]
     pub fn get_cached_component(&self, key: &str) -> Option<&AnyView> {
-        self.component_cache.get(key)
+        let cached = self.component_cache.get(key)?;
+        cached.last_used.set(self.tick());
+        Some(&cached.view)
     }
 
-    /// Store a component view in the cache, evicting the oldest entry if full.
+    /// Store a component view in the cache, evicting the least recently used
+    /// entry if the cache is full.
     pub fn cache_component(&mut self, key: String, view: AnyView) {
         if !self.component_cache.contains_key(&key) {
-            // Evict oldest entries until we are under the limit
-            while self.component_cache.len() >= MAX_COMPONENT_CACHE {
-                if let Some(oldest_key) = self.component_cache_order.pop_front() {
-                    self.component_cache.remove(&oldest_key);
-                } else {
+            while self.component_cache.len() >= self.component_cache_capacity.max(1) {
+                let Some(oldest) = self
+                    .component_cache
+                    .iter()
+                    .min_by_key(|(_, cached)| cached.last_used.get())
+                    .map(|(key, _)| key.clone())
+                else {
                     break;
-                }
+                };
+                trace_log!("Evicting cached component '{}'", oldest);
+                self.component_cache.remove(&oldest);
             }
-            self.component_cache_order.push_back(key.clone());
         }
-        self.component_cache.insert(key, view);
+        let last_used = Cell::new(self.tick());
+        self.component_cache
+            .insert(key, CachedComponent { view, last_used });
+    }
+
+    /// Set how many component views are kept alive (default
+    /// [`DEFAULT_COMPONENT_CACHE_CAPACITY`]). Shrinking evicts the least
+    /// recently used views right away.
+    pub fn set_component_cache_capacity(&mut self, capacity: usize) {
+        self.component_cache_capacity = capacity.max(1);
+        while self.component_cache.len() > self.component_cache_capacity {
+            let Some(oldest) = self
+                .component_cache
+                .iter()
+                .min_by_key(|(_, cached)| cached.last_used.get())
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.component_cache.remove(&oldest);
+        }
+    }
+
+    /// Number of cached component views.
+    #[must_use]
+    pub fn component_cache_len(&self) -> usize {
+        self.component_cache.len()
+    }
+
+    /// Drop the cached component views of the route registered at `route_path`
+    /// (for example `"/users/:id"` or a child path like `"settings"`), so the
+    /// next visit builds a fresh page. Returns how many views were dropped.
+    pub fn evict_components(&mut self, route_path: &str) -> usize {
+        let prefix = component_key_prefix(route_path);
+        let before = self.component_cache.len();
+        self.component_cache
+            .retain(|key, _| !key.starts_with(&prefix));
+        before - self.component_cache.len()
+    }
+
+    /// Drop every cached component view.
+    pub fn clear_component_cache(&mut self) {
+        self.component_cache.clear();
+    }
+
+    fn tick(&self) -> u64 {
+        let next = self.cache_clock.get() + 1;
+        self.cache_clock.set(next);
+        next
+    }
+
+    /// The cached page view rendered for a match-stack entry, if any.
+    fn page_view(&self, entry: &crate::resolve::MatchEntry) -> Option<&AnyView> {
+        let prefix = component_key_prefix(&entry.route.config.path);
+        let mut pairs: Vec<_> = entry
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        pairs.sort();
+        let with_params = format!("?{}", pairs.join("&"));
+        self.component_cache.iter().find_map(|(key, cached)| {
+            let rest = key.strip_prefix(&prefix)?;
+            // `route:{path}:{TypeId}` or `route:{path}:{TypeId}?{params}`
+            rest.find('?').map_or(Some(&cached.view), |pos| {
+                (rest[pos..] == with_params).then_some(&cached.view)
+            })
+        })
+    }
+
+    /// Route paths of the levels being left that opted out of caching with
+    /// [`Route::keep_alive(false)`](crate::Route::keep_alive).
+    fn departing_non_keep_alive(&self, common: usize) -> Vec<String> {
+        self.match_stack.entries()[common..]
+            .iter()
+            .filter(|entry| !entry.route.is_keep_alive())
+            .map(|entry| entry.route.config.path.clone())
+            .collect()
+    }
+
+    // ========================================================================
+    // Route change events
+    // ========================================================================
+
+    /// The last completed navigation, if any.
+    #[must_use]
+    pub const fn last_change(&self) -> Option<&crate::RouteChangeEvent> {
+        self.last_change.as_ref()
+    }
+
+    /// Counter incremented on every completed navigation.
+    #[must_use]
+    pub const fn change_count(&self) -> u64 {
+        self.change_seq
     }
 
     // ========================================================================
@@ -757,6 +1068,24 @@ impl GlobalRouter {
     #[cfg(feature = "transition")]
     pub const fn take_next_transition(&mut self) -> Option<Transition> {
         self.next_transition.take()
+    }
+
+    /// Mirror slide transitions when navigating back (default `true`), so a
+    /// page that slid in from the right slides back out to the right.
+    #[cfg(feature = "transition")]
+    pub const fn set_reverse_transitions_on_back(&mut self, reverse: bool) {
+        self.reverse_transitions_on_back = reverse;
+    }
+
+    /// Whether the last navigation went back and transitions should be mirrored.
+    #[cfg(feature = "transition")]
+    #[must_use]
+    pub fn is_navigating_back(&self) -> bool {
+        self.reverse_transitions_on_back
+            && self
+                .last_change
+                .as_ref()
+                .is_some_and(|event| event.direction == crate::NavigationDirection::Back)
     }
 
     /// Check if there's a transition override set.
@@ -810,80 +1139,20 @@ impl Default for GlobalRouter {
             #[cfg(feature = "transition")]
             next_transition: None,
             component_cache: HashMap::new(),
-            component_cache_order: std::collections::VecDeque::new(),
+            component_cache_capacity: DEFAULT_COMPONENT_CACHE_CAPACITY,
+            cache_clock: Cell::new(0),
             error_handlers: ErrorHandlers::new(),
+            pending: None,
+            nav_seq: 0,
+            change_seq: 0,
+            last_change: None,
+            #[cfg(feature = "transition")]
+            reverse_transitions_on_back: true,
         }
     }
 }
 
 impl Global for GlobalRouter {}
-
-// ============================================================================
-// Helper: path prefix matching with parameter support
-// ============================================================================
-
-/// Walk the route tree, calling `visitor` on each route whose accumulated path
-/// is a prefix of `target_path`. The visitor receives the route and the full
-/// accumulated path.
-///
-/// This factored-out helper avoids duplicating tree-walk logic between guard
-/// collection and middleware collection.
-fn walk_matching_routes<'a>(
-    route: &'a Arc<Route>,
-    target_path: &str,
-    accumulated: &str,
-    visitor: &mut dyn FnMut(&'a Route, &str),
-) {
-    let route_path = trim_slashes(&route.config.path);
-
-    // Avoid allocations when possible by reusing the existing string
-    let full: std::borrow::Cow<'_, str> = if accumulated.is_empty() {
-        std::borrow::Cow::Borrowed(route_path)
-    } else if route_path.is_empty() {
-        std::borrow::Cow::Borrowed(accumulated)
-    } else {
-        std::borrow::Cow::Owned(format!("{accumulated}/{route_path}"))
-    };
-
-    if !full.is_empty() && !path_matches_prefix(target_path, &full) {
-        return;
-    }
-
-    visitor(route, &full);
-
-    for child in route.get_children() {
-        walk_matching_routes(child, target_path, &full, visitor);
-    }
-}
-
-/// Check if `path` matches `prefix` as a route prefix (supports `:param` segments).
-///
-/// Uses iterators instead of collecting into `Vec`s to avoid allocation.
-///
-/// Examples:
-/// - `path_matches_prefix("dashboard/settings", "dashboard")` → true
-/// - `path_matches_prefix("dashboard", "dashboard")` → true
-/// - `path_matches_prefix("users/123", "users/:id")` → true
-/// - `path_matches_prefix("other", "dashboard")` → false
-fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    let mut path_segs = path.split('/').filter(|s| !s.is_empty());
-    let prefix_segs = prefix.split('/').filter(|s| !s.is_empty());
-
-    for pfs in prefix_segs {
-        let Some(ps) = path_segs.next() else {
-            // Path exhausted before prefix — not a prefix match
-            return false;
-        };
-        if pfs.starts_with(':') {
-            continue;
-        }
-        if ps != pfs {
-            return false;
-        }
-    }
-
-    true
-}
 
 // ============================================================================
 // Navigation operation type
@@ -896,6 +1165,96 @@ enum NavigateOp {
     Replace,
     Back,
     Forward,
+}
+
+/// A navigation request as it moves through the pipeline.
+#[derive(Debug, Clone)]
+struct NavIntent {
+    path: String,
+    op: NavigateOp,
+    state: Option<HistoryState>,
+    /// Set when resuming after async guards, so they are not run again.
+    resumed: bool,
+}
+
+impl NavIntent {
+    const fn new(path: String, op: NavigateOp) -> Self {
+        Self {
+            path,
+            op,
+            state: None,
+            resumed: false,
+        }
+    }
+
+    /// The intent to follow when a guard or hook redirects to `to`.
+    ///
+    /// A replace stays a replace (so the redirect doesn't add a history entry);
+    /// push, back and forward become a push of the redirect target.
+    const fn redirect(&self, to: String) -> Self {
+        let op = match self.op {
+            NavigateOp::Replace => NavigateOp::Replace,
+            NavigateOp::Push | NavigateOp::Back | NavigateOp::Forward => NavigateOp::Push,
+        };
+        Self::new(to, op)
+    }
+}
+
+/// A navigation waiting on async guards.
+#[derive(Clone)]
+struct PendingNavigation {
+    id: u64,
+    intent: NavIntent,
+    redirect_depth: usize,
+    future: Rc<RefCell<Option<crate::guards::GuardFuture>>>,
+}
+
+/// State restored when an `on_enter` hook denies a navigation.
+struct RouterSnapshot {
+    state: RouterState,
+    match_stack: MatchStack,
+    #[cfg(feature = "transition")]
+    previous_stack: Option<MatchStack>,
+}
+
+/// A cached component view and when it was last rendered (for LRU eviction).
+#[derive(Clone)]
+struct CachedComponent {
+    view: AnyView,
+    last_used: Cell<u64>,
+}
+
+/// Log a warning when `route` (or one of its children) can never match
+/// because an earlier sibling's pattern already covers it.
+fn warn_shadowed(siblings: &[Arc<Route>], route: &Route) {
+    for earlier in siblings {
+        if crate::matcher::shadows(&earlier.config.path, &route.config.path) {
+            warn_log!(
+                "Route '{}' is unreachable: the earlier route '{}' matches every path it does. \
+                 Register the more specific route first.",
+                route.config.path,
+                earlier.config.path
+            );
+        }
+    }
+    for (i, child) in route.children.iter().enumerate() {
+        warn_shadowed(&route.children[..i], child);
+    }
+}
+
+/// Number of leading levels two match stacks share (same route, same params).
+fn common_prefix_len(current: &MatchStack, target: &MatchStack) -> usize {
+    current
+        .entries()
+        .iter()
+        .zip(target.entries())
+        .take_while(|(a, b)| Arc::ptr_eq(&a.route, &b.route) && a.params == b.params)
+        .count()
+}
+
+/// Cache-key prefix of every component view created for `route_path`.
+fn component_key_prefix(route_path: &str) -> String {
+    format!("route:{route_path}:")
 }
 
 // ============================================================================
@@ -957,10 +1316,7 @@ where
 /// `cx.update_global::<GlobalRouter, _>(|r, cx| r.push(path, cx))`.
 pub fn navigate(cx: &mut App, path: impl Into<String>) {
     let path = path.into();
-    cx.update_global::<GlobalRouter, _>(|router, cx| {
-        router.push(path, cx);
-    });
-    cx.refresh_windows();
+    let _ = run_navigation(cx, |router, cx| router.push(path, cx));
 }
 
 /// Return the current path from the global router.
@@ -989,43 +1345,25 @@ pub struct NavigatorHandle<'a, C: BorrowAppContext> {
 impl<C: BorrowAppContext + BorrowMut<App>> NavigatorHandle<'_, C> {
     /// Navigate to a new path.
     pub fn push(self, route: impl IntoRoute) -> Self {
-        let descriptor = route.into_route();
-        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.push(descriptor.path, app);
-        });
-        self.cx.borrow_mut().refresh_windows();
+        Navigator::push(self.cx, route);
         self
     }
 
     /// Replace current path without adding to history.
     pub fn replace(self, route: impl IntoRoute) -> Self {
-        let descriptor = route.into_route();
-        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.replace(descriptor.path, app);
-        });
-        self.cx.borrow_mut().refresh_windows();
+        Navigator::replace(self.cx, route);
         self
     }
 
     /// Go back to the previous route.
     pub fn pop(self) -> Self {
-        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.back(app);
-        });
-        self.cx.borrow_mut().refresh_windows();
+        Navigator::back(self.cx);
         self
     }
 
     /// Go forward in history.
     pub fn forward(self) -> Self {
-        self.cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.forward(app);
-        });
-        self.cx.borrow_mut().refresh_windows();
+        Navigator::forward(self.cx);
         self
     }
 }
@@ -1061,24 +1399,41 @@ impl Navigator {
     }
 
     /// Navigate to a new path.
+    ///
+    /// Use [`try_push`](Self::try_push) to learn whether a guard blocked it.
     pub fn push(cx: &mut (impl BorrowAppContext + BorrowMut<App>), route: impl IntoRoute) {
+        let _ = Self::try_push(cx, route);
+    }
+
+    /// Navigate to a new path and return the pipeline's [`NavigationResult`].
+    ///
+    /// The result is [`NavigationResult::Pending`] while async guards run;
+    /// the navigation then completes (or is blocked) on its own.
+    pub fn try_push(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+        route: impl IntoRoute,
+    ) -> NavigationResult {
         let descriptor = route.into_route();
         debug_log!("Navigator::push: pushing path '{}'", descriptor.path);
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.push(descriptor.path, app);
-        });
-        cx.borrow_mut().refresh_windows();
+        run_navigation(cx.borrow_mut(), |router, app| {
+            router.push(descriptor.path, app)
+        })
     }
 
     /// Replace current path without adding to history.
     pub fn replace(cx: &mut (impl BorrowAppContext + BorrowMut<App>), route: impl IntoRoute) {
+        let _ = Self::try_replace(cx, route);
+    }
+
+    /// Replace the current path and return the pipeline's [`NavigationResult`].
+    pub fn try_replace(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+        route: impl IntoRoute,
+    ) -> NavigationResult {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.replace(descriptor.path, app);
-        });
-        cx.borrow_mut().refresh_windows();
+        run_navigation(cx.borrow_mut(), |router, app| {
+            router.replace(descriptor.path, app)
+        })
     }
 
     /// Push a new path with associated [`HistoryState`] data.
@@ -1088,11 +1443,9 @@ impl Navigator {
         state: HistoryState,
     ) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.push_with_state(descriptor.path, state, app);
+        let _ = run_navigation(cx.borrow_mut(), |router, app| {
+            router.push_with_state(descriptor.path, state, app)
         });
-        cx.borrow_mut().refresh_windows();
     }
 
     /// Replace current path with associated [`HistoryState`] data.
@@ -1102,11 +1455,9 @@ impl Navigator {
         state: HistoryState,
     ) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.replace_with_state(descriptor.path, state, app);
+        let _ = run_navigation(cx.borrow_mut(), |router, app| {
+            router.replace_with_state(descriptor.path, state, app)
         });
-        cx.borrow_mut().refresh_windows();
     }
 
     /// Return the current [`HistoryEntry`] (path + optional state).
@@ -1116,11 +1467,7 @@ impl Navigator {
 
     /// Go back to the previous route.
     pub fn pop(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) {
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.back(app);
-        });
-        cx.borrow_mut().refresh_windows();
+        let _ = Self::try_back(cx);
     }
 
     /// Alias for [`pop`](Navigator::pop).
@@ -1128,18 +1475,41 @@ impl Navigator {
         Self::pop(cx);
     }
 
-    /// Go forward in history.
-    pub fn forward(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) {
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.forward(app);
-        });
-        cx.borrow_mut().refresh_windows();
+    /// Go back and return the pipeline's result, or `None` at the start of history.
+    pub fn try_back(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) -> Option<NavigationResult> {
+        run_optional_navigation(cx.borrow_mut(), GlobalRouter::back)
     }
 
-    /// Get current path.
+    /// Go forward in history.
+    pub fn forward(cx: &mut (impl BorrowAppContext + BorrowMut<App>)) {
+        let _ = Self::try_forward(cx);
+    }
+
+    /// Go forward and return the pipeline's result, or `None` at the end of history.
+    pub fn try_forward(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+    ) -> Option<NavigationResult> {
+        run_optional_navigation(cx.borrow_mut(), GlobalRouter::forward)
+    }
+
+    /// Get current path (including any query string).
     pub fn current_path(cx: &App) -> String {
         cx.global::<GlobalRouter>().current_path().to_string()
+    }
+
+    /// Query parameters of the current location (`/users?page=2` → `page=2`).
+    pub fn query(cx: &App) -> QueryParams {
+        cx.global::<GlobalRouter>().current_query()
+    }
+
+    /// Route parameters of the deepest matched route.
+    pub fn params(cx: &App) -> RouteParams {
+        cx.global::<GlobalRouter>().match_stack().params()
+    }
+
+    /// Return `true` while a navigation waits on async guards.
+    pub fn is_pending(cx: &App) -> bool {
+        cx.global::<GlobalRouter>().is_pending()
     }
 
     /// Check if can go back.
@@ -1163,13 +1533,19 @@ impl Navigator {
         name: &str,
         params: &RouteParams,
     ) {
-        let name = name.to_string();
-        let params = params.clone();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.push_named(&name, &params, app);
-        });
-        cx.borrow_mut().refresh_windows();
+        let _ = Self::try_push_named(cx, name, params);
+    }
+
+    /// Navigate to a named route and return the pipeline's result, or `None`
+    /// if the name is unknown or a parameter is missing.
+    pub fn try_push_named(
+        cx: &mut (impl BorrowAppContext + BorrowMut<App>),
+        name: &str,
+        params: &RouteParams,
+    ) -> Option<NavigationResult> {
+        run_optional_navigation(cx.borrow_mut(), |router, app| {
+            router.push_named(name, params, app)
+        })
     }
 
     /// Generate URL for a named route.
@@ -1193,11 +1569,9 @@ impl Navigator {
         transition: Transition,
     ) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.push_with_transition(descriptor.path, transition, app);
+        let _ = run_navigation(cx.borrow_mut(), |router, app| {
+            router.push_with_transition(descriptor.path, transition, app)
         });
-        cx.borrow_mut().refresh_windows();
     }
 
     /// Replace with a specific transition.
@@ -1208,11 +1582,9 @@ impl Navigator {
         transition: Transition,
     ) {
         let descriptor = route.into_route();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
-            router.replace_with_transition(descriptor.path, transition, app);
+        let _ = run_navigation(cx.borrow_mut(), |router, app| {
+            router.replace_with_transition(descriptor.path, transition, app)
         });
-        cx.borrow_mut().refresh_windows();
     }
 
     /// Push named route with a specific transition.
@@ -1223,15 +1595,61 @@ impl Navigator {
         params: &RouteParams,
         transition: Transition,
     ) {
-        let name = name.to_string();
-        let params = params.clone();
-        cx.update_global::<GlobalRouter, _>(|router, cx| {
-            let app: &App = cx.borrow_mut();
+        let _ = run_optional_navigation(cx.borrow_mut(), |router, app| {
             router.set_next_transition(transition);
-            router.push_named(&name, &params, app);
+            router.push_named(name, params, app)
         });
-        cx.borrow_mut().refresh_windows();
     }
+}
+
+// ============================================================================
+// Navigation driver
+// ============================================================================
+
+/// Run a navigation on the global router, refresh windows, and drive any
+/// async guards it is waiting on.
+fn run_navigation(
+    cx: &mut App,
+    navigate: impl FnOnce(&mut GlobalRouter, &App) -> NavigationResult,
+) -> NavigationResult {
+    run_optional_navigation(cx, |router, app| Some(navigate(router, app))).unwrap_or_else(|| {
+        NavigationResult::Error(crate::error::NavigationError::NavigationFailed {
+            message: "navigation returned no result".into(),
+        })
+    })
+}
+
+fn run_optional_navigation(
+    cx: &mut App,
+    navigate: impl FnOnce(&mut GlobalRouter, &App) -> Option<NavigationResult>,
+) -> Option<NavigationResult> {
+    let result = cx.update_global::<GlobalRouter, _>(|router, cx| navigate(router, cx));
+    if result.as_ref().is_some_and(NavigationResult::is_pending) {
+        drive_pending_navigation(cx);
+    }
+    cx.refresh_windows();
+    result
+}
+
+/// Spawn the pending navigation's async guards on the foreground executor and
+/// finish the navigation when they resolve.
+fn drive_pending_navigation(cx: &App) {
+    let Some((id, future)) = cx.global::<GlobalRouter>().take_pending_future() else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let action = future.await;
+        let _ = cx.update(|cx| {
+            let result = cx.update_global::<GlobalRouter, _>(|router, cx| {
+                router.resume_pending(id, action, cx)
+            });
+            if result.as_ref().is_some_and(NavigationResult::is_pending) {
+                drive_pending_navigation(cx);
+            }
+            cx.refresh_windows();
+        });
+    })
+    .detach();
 }
 
 // ============================================================================
@@ -1656,35 +2074,5 @@ mod tests {
         assert_eq!(log[0], "before:/page");
         assert_eq!(log[1], "after:/page");
         drop(log);
-    }
-
-    // ========================================================================
-    // path_matches_prefix unit tests
-    // ========================================================================
-
-    #[test]
-    fn test_path_matches_prefix_exact() {
-        assert!(path_matches_prefix("dashboard", "dashboard"));
-    }
-
-    #[test]
-    fn test_path_matches_prefix_child() {
-        assert!(path_matches_prefix("dashboard/settings", "dashboard"));
-    }
-
-    #[test]
-    fn test_path_matches_prefix_no_match() {
-        assert!(!path_matches_prefix("other", "dashboard"));
-    }
-
-    #[test]
-    fn test_path_matches_prefix_with_param() {
-        assert!(path_matches_prefix("users/123", "users/:id"));
-        assert!(path_matches_prefix("users/123/posts", "users/:id"));
-    }
-
-    #[test]
-    fn test_path_matches_prefix_shorter_path() {
-        assert!(!path_matches_prefix("users", "users/123"));
     }
 }

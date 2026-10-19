@@ -33,6 +33,7 @@ use crate::{NavigationDirection, RouteChangeEvent};
 
 /// Navigation history entry
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HistoryEntry {
     /// Path for this history entry
     pub path: String,
@@ -62,6 +63,7 @@ impl HistoryEntry {
 /// Can store arbitrary data for history restoration
 /// (e.g., scroll position, form data, etc.)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HistoryState {
     /// Key-value pairs for state data
     pub data: std::collections::HashMap<String, String>,
@@ -85,6 +87,72 @@ impl HistoryState {
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
+    }
+
+    /// Builder-style setter for any value with a string form.
+    ///
+    /// ```
+    /// use gpui_navigator::HistoryState;
+    ///
+    /// let state = HistoryState::new().with("scroll_y", 420).with("tab", "comments");
+    /// assert_eq!(state.get_as::<u32>("scroll_y"), Some(420));
+    /// assert_eq!(state.get("tab").map(String::as_str), Some("comments"));
+    /// ```
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // `.with("page", 2)` reads better than `&2`
+    pub fn with(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        self.data.insert(key.into(), value.to_string());
+        self
+    }
+
+    /// Get a value parsed as `T`; `None` if it is missing or does not parse.
+    #[must_use]
+    pub fn get_as<T: std::str::FromStr>(&self, key: &str) -> Option<T> {
+        self.data.get(key)?.parse().ok()
+    }
+}
+
+/// A saved copy of the navigation history (entries and cursor), for
+/// restoring the app on the screen the user left it on.
+///
+/// With the `serde` feature it serializes with any serde format.
+///
+/// ```
+/// use gpui_navigator::{History, HistorySnapshot};
+///
+/// let mut history = History::new("/".to_string());
+/// history.push("/settings".to_string());
+///
+/// let snapshot = HistorySnapshot::of(&history);
+/// let mut restored = History::default();
+/// snapshot.apply_to(&mut restored);
+/// assert_eq!(restored.current_path(), "/settings");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct HistorySnapshot {
+    /// History entries, oldest first.
+    pub entries: Vec<HistoryEntry>,
+    /// Index of the current entry in `entries`.
+    pub current: usize,
+}
+
+impl HistorySnapshot {
+    /// Capture the entries and cursor of `history`.
+    #[must_use]
+    pub fn of(history: &History) -> Self {
+        Self {
+            entries: history.entries().to_vec(),
+            current: history.current_index(),
+        }
+    }
+
+    /// Restore this snapshot into `history`. Invalid snapshots (empty, or a
+    /// cursor out of range) are ignored; returns whether it was applied.
+    pub fn apply_to(self, history: &mut History) -> bool {
+        let valid = !self.entries.is_empty() && self.current < self.entries.len();
+        history.restore(self.entries, self.current);
+        valid
     }
 }
 

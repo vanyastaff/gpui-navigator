@@ -2,12 +2,14 @@
 //!
 //! A declarative routing library for GPUI with support for:
 //!
-//! - **Route Transitions** - Fade, slide, scale animations with configurable duration
+//! - **Route Transitions** - Fade, slide, eased and custom animations; slides mirror when going back
 //! - **Nested Routing** - Parent/child route hierarchies with `RouterOutlet`
 //! - **Route Guards** - Authentication, authorization, and custom access control
 //! - **Middleware** - Before/after hooks for navigation events
 //! - **Named Routes** - Navigate using route names instead of paths
-//! - **Route Matching** - Pattern matching with parameters and constraints
+//! - **Route Matching** - `:params`, typed constraints (`:id<int>`), `*` wildcards; query strings ignored
+//! - **Async Guards** - Guards that await I/O before a navigation completes
+//! - **Desktop Navigation** - Back/forward key bindings, mouse side buttons, route change events
 //! - **Error Handling** - Custom 404 and error handlers
 //!
 //! # Quick Start
@@ -124,7 +126,7 @@
 //! gpui-navigator = { version = "0.2", default-features = false, features = ["gpui-pre", "transition"] }
 //! ```
 
-#![doc(html_root_url = "https://docs.rs/gpui-navigator/0.2.0")]
+#![doc(html_root_url = "https://docs.rs/gpui-navigator/0.2.1")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 // Lints are configured in Cargo.toml [lints] section
@@ -157,6 +159,9 @@ extern crate gpui_pre as gpui;
 // Logging abstraction
 pub mod logging;
 
+// Back/forward actions, mouse navigation, route change notifications
+pub mod actions;
+
 // Cache (optional)
 #[cfg(feature = "cache")]
 pub mod cache;
@@ -183,6 +188,7 @@ pub mod guards;
 pub mod transition;
 
 // Other modules
+pub mod matcher;
 pub mod nested;
 pub mod params;
 pub mod resolve;
@@ -192,19 +198,25 @@ pub mod widgets;
 mod context;
 
 // Re-export main types for convenient access
+pub use actions::{
+    bind_navigation_keys, on_route_change, register_navigation_actions, with_mouse_navigation,
+    GoBack, GoForward,
+};
 #[cfg(feature = "cache")]
 pub use cache::{CacheStats, RouteCache, RouteId};
 pub use context::{
     current_path, init_router, navigate, GlobalRouter, NavigationRequest, Navigator,
-    NavigatorHandle, UseRouter,
+    NavigatorHandle, UseRouter, DEFAULT_COMPONENT_CACHE_CAPACITY,
 };
 pub use error::{ErrorHandler, ErrorHandlers, NavigationError, NavigationResult, NotFoundHandler};
 #[cfg(feature = "guard")]
 pub use guards::{
-    guard_fn, AuthGuard, GuardBuilder, Guards, NotGuard, PermissionGuard, RoleGuard, RouteGuard,
+    async_guard_fn, guard_fn, AsyncFnGuard, AuthGuard, GuardBuilder, GuardFuture, Guards, NotGuard,
+    PermissionGuard, RoleGuard, RouteGuard,
 };
-pub use history::{History, HistoryEntry, HistoryState};
+pub use history::{History, HistoryEntry, HistorySnapshot, HistoryState};
 pub use lifecycle::{NavigationAction, RouteLifecycle};
+pub use matcher::{path_only, split_path_and_query, WILDCARD_PARAM};
 #[cfg(feature = "middleware")]
 pub use middleware::{middleware_fn, RouteMiddleware};
 pub use nested::{build_child_path, extract_param_name, normalize_path, resolve_child_route};
@@ -216,10 +228,14 @@ pub use route::{
 };
 pub use state::RouterState;
 #[cfg(feature = "transition")]
-pub use transition::{SlideDirection, Transition, TransitionConfig};
+pub use transition::{
+    ease_in_cubic, ease_in_out_cubic, ease_out_cubic, linear, CustomTransition, EasedKind, Easing,
+    SlideDirection, Transition, TransitionConfig, TransitionStyle,
+};
 pub use widgets::{
-    render_router_outlet, router_link, router_outlet, router_outlet_named, router_view,
-    DefaultPages, RouterLink, RouterOutlet, RouterView,
+    is_link_active, render_router_outlet, router_debug_panel, router_link, router_outlet,
+    router_outlet_named, router_view, ActiveMatch, DefaultPages, RouterLink, RouterOutlet,
+    RouterView,
 };
 
 use std::collections::HashMap;

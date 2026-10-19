@@ -211,3 +211,86 @@ jobs:
         # Advisories come from gpui's own dependency tree, which this crate can't change; report without blocking.
         continue-on-error: true
         run: cargo audit
+
+  semver:
+    name: Semver check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libvulkan-dev \
+            libwayland-dev
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      # cargo-semver-checks builds rustdoc in a fresh workspace that ignores
+      # Cargo.lock, and fresh resolutions of gpui's dependency tree can fail
+      # to build. Build both rustdoc JSON files with the lockfile instead.
+      - name: Build rustdoc JSON for this PR
+        run: cargo +nightly rustdoc --locked --lib -- -Zunstable-options --output-format json
+
+      - name: Build rustdoc JSON for the base branch
+        run: |
+          git worktree add ../baseline ${{ github.event.pull_request.base.sha }}
+          cd ../baseline
+          CARGO_TARGET_DIR=${{ github.workspace }}/target/baseline \
+            cargo +nightly rustdoc --locked --lib -- -Zunstable-options --output-format json
+
+      - name: Check semver compatibility with the base branch
+        run: |
+          cargo semver-checks \
+            --baseline-rustdoc target/baseline/doc/gpui_navigator.json \
+            --current-rustdoc target/doc/gpui_navigator.json
+
+  gpui-component-example:
+    name: gpui-component example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libvulkan-dev \
+            libwayland-dev
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            examples/gpui-component/target
+          key: ${{ runner.os }}-cargo-gpui-component-${{ hashFiles('examples/gpui-component/Cargo.lock') }}
+
+      - name: Build the example
+        run: cargo check --locked --manifest-path examples/gpui-component/Cargo.toml

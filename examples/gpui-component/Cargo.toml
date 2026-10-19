@@ -1,0 +1,14 @@
+[package]
+name = "gpui-navigator-gpui-component-example"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "gpui-navigator with gpui-component widgets: sidebar layout, forms, nested routes"
+
+# Standalone: not part of the gpui-navigator package or its CI test matrix.
+[workspace]
+
+[dependencies]
+gpui = "0.2"
+gpui-component = "0.5"
+gpui-navigator = { path = "../.." }

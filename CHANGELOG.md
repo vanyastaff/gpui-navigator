@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-19
+
+### Fixed
+- Paths with a query string or fragment (`/users?page=2`, `/doc#intro`) now match their route;
+  previously they rendered the 404 page
+- `*` wildcard routes work in the match stack used for rendering (they only worked in `Route::matches`)
+- `:param<constraint>` segments are enforced instead of being parsed and ignored (and `:id<i32>` no
+  longer fails path validation)
+- Every resolver (match stack, named outlets, `Route::matches`, `RouteParams::from_path`) now shares
+  one matcher, so they agree on what a path matches
+- Guards and middleware are taken from the routes that actually match the target path; before, a
+  guard on `/:id` also ran when navigating to a sibling like `/about`
+- A guard redirect during `replace` replaces instead of pushing an extra history entry
+- `on_enter` returning deny rolls the navigation back instead of leaving the app on the denied page
+- `on_exit` runs before `before_navigation` middleware, so a denied exit never leaves middleware
+  half-run; `can_deactivate`/`on_exit`/`on_enter` run on every level that changes instead of only
+  the top-level route (exit/deactivate) or the leaf (enter)
+- `push_with_state` attaches the state only to the requested path, not to a redirect target
+- `NavigationRequest::params` is filled with the target's parameters
+- `url_for` substitutes whole segments (`:id` no longer clobbers `:idx`), returns `None` when a
+  parameter is missing, and works for named nested routes (registered with their full path)
+- `RouterLink` navigates on mouse release instead of press, and ignores the query string when
+  deciding it is active
+- `RouterOutlet` no longer updates the global router on every render, which re-triggered
+  `observe_global::<GlobalRouter>` observers each frame
+- `QueryParams::from_query_string` accepts a leading `?` and bare flags (`?debug`)
+
+### Added
+- Async guards: `async_guard_fn`, `RouteGuard::check_async`, `NavigationResult::Pending`,
+  `Navigator::is_pending`; a newer navigation cancels a pending one
+- `Navigator::try_push` / `try_replace` / `try_back` / `try_forward` / `try_push_named` return the
+  `NavigationResult`
+- `Navigator::query` and `Navigator::params`, `GlobalRouter::current_query`, `QueryParams::from_location`,
+  `QueryParams::iter`, `split_path_and_query`, `path_only`
+- Path constraints `int`, `i32`, `uint`, `u32`, `usize`, `float`, `bool`, `uuid`, `alpha`, `alnum`,
+  `slug`, and named wildcards `*rest`
+- `Route::can_leave::<Page>(|page, cx| ...)` checks the cached page entity before leaving
+  (`RouteLifecycle::can_deactivate_page`)
+- `Route::keep_alive(false)`; component cache is now LRU with `set_component_cache_capacity`,
+  `evict_components`, `clear_component_cache`, `component_cache_len`
+- `GoBack` / `GoForward` actions, `bind_navigation_keys`, `register_navigation_actions`,
+  `with_mouse_navigation` (mouse side buttons)
+- `on_route_change` subscription, `GlobalRouter::last_change` / `change_count`
+- `HistorySnapshot`, `GlobalRouter::history_snapshot` / `restore_history`, `RouterState::history`,
+  `HistoryState::with` / `get_as`, and a `serde` feature for history types
+- Transitions: `Transition::with_easing`, `Transition::custom`, `Transition::reversed`,
+  `SlideDirection::opposite`, easing functions `linear`, `ease_in_cubic`, `ease_out_cubic`;
+  slides mirror when navigating back (`GlobalRouter::set_reverse_transitions_on_back`)
+- `RouterLink::active_match(ActiveMatch::Prefix)` and `is_link_active`
+- `router_debug_panel` showing location, match stack, history and cache
+- A warning at registration when a route is unreachable because an earlier sibling covers it
+- `desktop_demo` example and a standalone `examples/gpui-component` app
+- Property tests for path matching, pipeline tests, and a route-resolution benchmark
+  (`cargo bench --bench resolve`)
+- CI: semver check against the last release, and a build of the gpui-component example
+
+### Changed
+- `apply_transition` uses the same styling as `RouterOutlet` (slides move by the container's size
+  instead of a fixed 100px and no longer fade)
+
 ## [0.2.0] - 2026-10-19
 
 ### Breaking
@@ -118,6 +178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Doc comments for all public APIs
 - Example application: `transition_demo`
 
-[Unreleased]: https://github.com/vanyastaff/gpui-navigator/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/vanyastaff/gpui-navigator/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/vanyastaff/gpui-navigator/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/vanyastaff/gpui-navigator/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vanyastaff/gpui-navigator/releases/tag/v0.1.0

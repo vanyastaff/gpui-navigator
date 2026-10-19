@@ -42,7 +42,8 @@
 //! - Each outlet sets depth = `parent_depth` + 1 and renders `match_stack[depth]`
 //! - Works for both functional (`render_router_outlet`) and entity (`RouterOutlet`) APIs
 
-use crate::nested::{normalize_path, trim_slashes};
+use crate::matcher;
+use crate::nested::trim_slashes;
 use crate::route::Route;
 use crate::{debug_log, trace_log, warn_log, RouteParams};
 use std::cell::Cell;
@@ -316,14 +317,7 @@ const MAX_DEPTH: usize = 16;
 /// ```
 #[must_use]
 pub fn resolve_match_stack(routes: &[Arc<Route>], path: &str) -> MatchStack {
-    let normalized = normalize_path(path);
-    let path_str = trim_slashes(&normalized);
-
-    let segments: Vec<&str> = if path_str.is_empty() {
-        vec![]
-    } else {
-        path_str.split('/').collect()
-    };
+    let segments = matcher::segments(path);
 
     let mut stack = MatchStack::new();
     resolve_recursive(routes, &segments, 0, &RouteParams::new(), &mut stack);
@@ -424,39 +418,13 @@ fn resolve_recursive(
             continue;
         }
 
-        let route_segments: Vec<&str> = route_path.split('/').collect();
-
         // Case 2: Route has path segments → try to match against remaining path
-        if route_segments.len() > remaining.len() {
-            continue; // Not enough path segments
-        }
-
         let mut params = inherited_params.clone();
-        let mut matched = true;
-
-        for (i, route_seg) in route_segments.iter().enumerate() {
-            if route_seg.starts_with(':') {
-                // Parameter segment → extract value
-                let param_name = route_seg.trim_start_matches(':');
-                // Strip constraint syntax: `:id<i32>` → `id`
-                let param_name = param_name
-                    .find('<')
-                    .map_or(param_name, |pos| &param_name[..pos]);
-                params.insert(param_name.to_string(), remaining[i].to_string());
-            } else if *route_seg == remaining[i] {
-                // Static segment → exact match
-            } else {
-                matched = false;
-                break;
-            }
-        }
-
-        if !matched {
+        let Some(consumed) = matcher::match_prefix(route_path, remaining, &mut params) else {
             continue;
-        }
+        };
 
         // Segments matched! Push entry.
-        let consumed = route_segments.len();
         let after = &remaining[consumed..];
 
         trace_log!(
@@ -582,65 +550,43 @@ pub fn resolve_named_outlet(
     }
 
     // For named outlets, resolve against remaining path segments
-    let normalized = normalize_path(current_path);
-    let path_str = trim_slashes(&normalized);
-    let all_segments: Vec<&str> = if path_str.is_empty() {
-        vec![]
-    } else {
-        path_str.split('/').collect()
-    };
+    let all_segments = matcher::segments(current_path);
 
     // Calculate how many segments the parent chain consumed
-    let consumed = count_consumed_segments(match_stack, parent_depth);
+    let consumed = count_consumed_segments(match_stack, parent_depth, &all_segments);
     let remaining = &all_segments[consumed.min(all_segments.len())..];
 
-    // Try to match a named child
-    let params = parent_entry.params.clone();
+    let params = &parent_entry.params;
 
+    // Prefer a child that matches the remaining path, then fall back to the index child
     for child in named_children {
         let child_path = trim_slashes(&child.config.path);
-
         if child_path.is_empty() {
-            // Index route for named outlet
-            return Some((Arc::clone(child), params));
-        }
-
-        if remaining.is_empty() {
             continue;
         }
-
-        // Simple single-segment match (named outlets are typically flat)
-        #[allow(clippy::redundant_clone)] // params is reused across loop iterations
-        if child_path == remaining[0] || child_path.starts_with(':') {
-            if child_path.starts_with(':') {
-                let name = child_path.trim_start_matches(':');
-                let mut child_params = params.clone();
-                child_params.insert(name.to_string(), remaining[0].to_string());
-                return Some((Arc::clone(child), child_params));
-            }
-            return Some((Arc::clone(child), params.clone()));
+        let mut child_params = params.clone();
+        if matcher::match_prefix(child_path, remaining, &mut child_params).is_some() {
+            return Some((Arc::clone(child), child_params));
         }
     }
 
-    // Default: first child with empty path (if any)
-    for child in named_children {
-        let p = trim_slashes(&child.config.path);
-        if p.is_empty() {
-            return Some((Arc::clone(child), params));
-        }
-    }
-
-    None
+    named_children
+        .iter()
+        .find(|child| trim_slashes(&child.config.path).is_empty())
+        .map(|child| (Arc::clone(child), params.clone()))
 }
 
 /// Count how many path segments the match stack consumed up to a given depth.
-fn count_consumed_segments(stack: &MatchStack, up_to_depth: usize) -> usize {
+fn count_consumed_segments(stack: &MatchStack, up_to_depth: usize, segments: &[&str]) -> usize {
     let mut count = 0;
     for entry in stack.entries().iter().take(up_to_depth + 1) {
         let path = trim_slashes(&entry.route.config.path);
-        if !path.is_empty() {
-            count += path.split('/').count();
+        if path.is_empty() {
+            continue;
         }
+        let mut scratch = RouteParams::new();
+        count += matcher::match_prefix(path, &segments[count.min(segments.len())..], &mut scratch)
+            .unwrap_or(0);
     }
     count
 }

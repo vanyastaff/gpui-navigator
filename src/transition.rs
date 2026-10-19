@@ -10,8 +10,36 @@
 //! | [`Transition::None`] | default | No animation |
 //! | [`Transition::Fade`] | [`Transition::fade`] | Cross-fade (old fades out, new fades in) |
 //! | [`Transition::Slide`] | [`Transition::slide_left`], etc. | Positional slide in any direction |
+//! | [`Transition::Custom`] | [`Transition::custom`] | Your own enter/exit styling |
+//! | [`Transition::Eased`] | [`Transition::with_easing`] | Any of the above with an easing curve |
 //!
 //! Each transition carries a `duration_ms` controlling animation length.
+//!
+//! Slides are mirrored automatically when navigating back (a `slide_left`
+//! push is undone by a right slide); see
+//! [`GlobalRouter::set_reverse_transitions_on_back`](crate::GlobalRouter::set_reverse_transitions_on_back).
+//!
+//! ```ignore
+//! use gpui::Styled;
+//! use gpui_navigator::{ease_out_cubic, Transition};
+//!
+//! // Ease a built-in transition
+//! let slide = Transition::slide_left(250).with_easing(ease_out_cubic);
+//!
+//! // Or style the entering and leaving page yourself (progress goes 0 → 1)
+//! let fade_up = Transition::custom(
+//!     300,
+//!     |page, p| page.opacity(p).top(gpui::px(24.0 * (1.0 - p))),
+//!     |page, p| page.opacity(1.0 - p),
+//! );
+//! ```
+//!
+//! Transitions are plain data (functions, not closures with captures), so
+//! they can be built in `const` items:
+//!
+//! ```ignore
+//! const PAGE: Transition = Transition::slide_left(250).with_easing(gpui_navigator::ease_out_cubic);
+//! ```
 //!
 //! # Per-route configuration
 //!
@@ -29,8 +57,44 @@
 //! Use [`TransitionConfig::set_override`] or `Navigator::push_with_transition`
 //! to override the default for a single navigation.
 
-use gpui::{div, px, Div, IntoElement, ParentElement, Styled};
+use gpui::{div, relative, Div, IntoElement, ParentElement, Styled};
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Styles a page layer for a given animation progress (`0.0..=1.0`).
+///
+/// A plain function (or non-capturing closure), so transitions stay cheap to
+/// copy and usable in `const` contexts.
+pub type TransitionStyle = fn(Div, f32) -> Div;
+
+/// Maps linear animation progress (`0.0..=1.0`) to eased progress.
+pub type Easing = fn(f32) -> f32;
+
+/// A user-defined transition, see [`Transition::custom`].
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct CustomTransition {
+    /// Duration in milliseconds
+    pub duration_ms: u64,
+    /// Styles the entering page; progress goes from 0 (start) to 1 (settled)
+    pub enter: TransitionStyle,
+    /// Styles the leaving page; progress goes from 0 (start) to 1 (gone)
+    pub exit: TransitionStyle,
+    /// Optional easing curve
+    pub easing: Option<Easing>,
+}
+
+/// The built-in animation an [`Transition::Eased`] eases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EasedKind {
+    /// Cross-fade
+    Fade,
+    /// Slide in the given direction
+    Slide(SlideDirection),
+}
+
+type LayerStyle = Arc<dyn Fn(Div, f32) -> Div>;
 
 /// Direction for slide transitions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +108,19 @@ pub enum SlideDirection {
     Up,
     /// Slide from bottom to top
     Down,
+}
+
+impl SlideDirection {
+    /// The direction pointing the other way.
+    #[must_use]
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+        }
+    }
 }
 
 /// Built-in transition types for route animations.
@@ -80,6 +157,19 @@ pub enum Transition {
         direction: SlideDirection,
         /// Duration in milliseconds
         duration_ms: u64,
+    },
+
+    /// User-defined enter/exit styling, see [`Transition::custom`]
+    Custom(CustomTransition),
+
+    /// A fade or slide played with an easing curve, see [`Transition::with_easing`]
+    Eased {
+        /// The animation being eased
+        kind: EasedKind,
+        /// Duration in milliseconds
+        duration_ms: u64,
+        /// The easing curve
+        easing: Easing,
     },
 }
 
@@ -126,13 +216,157 @@ impl Transition {
         }
     }
 
+    /// Create a transition that styles the entering and leaving page yourself.
+    ///
+    /// Both functions receive the page's layer and the animation progress
+    /// (`0.0` at the start, `1.0` when done). Non-capturing closures work.
+    #[must_use]
+    pub const fn custom(duration_ms: u64, enter: TransitionStyle, exit: TransitionStyle) -> Self {
+        Self::Custom(CustomTransition {
+            duration_ms,
+            enter,
+            exit,
+            easing: None,
+        })
+    }
+
+    /// Play this transition with an easing curve such as [`ease_out_cubic`].
+    #[must_use]
+    pub const fn with_easing(self, easing: Easing) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Fade { duration_ms } => Self::Eased {
+                kind: EasedKind::Fade,
+                duration_ms,
+                easing,
+            },
+            Self::Slide {
+                direction,
+                duration_ms,
+            } => Self::Eased {
+                kind: EasedKind::Slide(direction),
+                duration_ms,
+                easing,
+            },
+            Self::Custom(mut custom) => {
+                custom.easing = Some(easing);
+                Self::Custom(custom)
+            }
+            Self::Eased {
+                kind, duration_ms, ..
+            } => Self::Eased {
+                kind,
+                duration_ms,
+                easing,
+            },
+        }
+    }
+
+    /// The mirrored transition, used when navigating back: slides change
+    /// direction, everything else stays the same.
+    #[must_use]
+    pub const fn reversed(&self) -> Self {
+        match *self {
+            Self::Slide {
+                direction,
+                duration_ms,
+            } => Self::Slide {
+                direction: direction.opposite(),
+                duration_ms,
+            },
+            Self::Eased {
+                kind: EasedKind::Slide(direction),
+                duration_ms,
+                easing,
+            } => Self::Eased {
+                kind: EasedKind::Slide(direction.opposite()),
+                duration_ms,
+                easing,
+            },
+            Self::None => Self::None,
+            Self::Fade { duration_ms } => Self::Fade { duration_ms },
+            Self::Custom(custom) => Self::Custom(custom),
+            Self::Eased {
+                kind,
+                duration_ms,
+                easing,
+            } => Self::Eased {
+                kind,
+                duration_ms,
+                easing,
+            },
+        }
+    }
+
     /// Get the duration of this transition
     #[must_use]
     pub const fn duration(&self) -> Duration {
         match self {
             Self::None => Duration::ZERO,
-            Self::Fade { duration_ms, .. } | Self::Slide { duration_ms, .. } => {
+            Self::Fade { duration_ms, .. }
+            | Self::Slide { duration_ms, .. }
+            | Self::Eased { duration_ms, .. }
+            | Self::Custom(CustomTransition { duration_ms, .. }) => {
                 Duration::from_millis(*duration_ms)
+            }
+        }
+    }
+
+    /// The easing curve, if any.
+    #[must_use]
+    pub const fn easing(&self) -> Option<Easing> {
+        match self {
+            Self::Eased { easing, .. } => Some(*easing),
+            Self::Custom(custom) => custom.easing,
+            _ => None,
+        }
+    }
+
+    /// The enter and exit layer styles used to animate this transition, or
+    /// `None` for [`Transition::None`].
+    pub(crate) fn styles(&self) -> Option<(LayerStyle, LayerStyle)> {
+        let slide = |direction: SlideDirection| -> (LayerStyle, LayerStyle) {
+            // Enter starts one full width/height away, exit ends one away on
+            // the other side.
+            let (sign, vertical) = match direction {
+                SlideDirection::Left => (1.0_f32, false),
+                SlideDirection::Right => (-1.0, false),
+                SlideDirection::Up => (1.0, true),
+                SlideDirection::Down => (-1.0, true),
+            };
+            let offset = move |layer: Div, amount: f32| {
+                if vertical {
+                    layer.top(relative(amount))
+                } else {
+                    layer.left(relative(amount))
+                }
+            };
+            (
+                Arc::new(move |layer, p| offset(layer, sign * (1.0 - p))),
+                Arc::new(move |layer, p| offset(layer, -sign * p)),
+            )
+        };
+        let fade = || -> (LayerStyle, LayerStyle) {
+            (
+                Arc::new(|layer: Div, p: f32| layer.opacity(p)),
+                Arc::new(|layer: Div, p: f32| layer.opacity(1.0 - p)),
+            )
+        };
+        match self {
+            Self::None => None,
+            Self::Fade { .. }
+            | Self::Eased {
+                kind: EasedKind::Fade,
+                ..
+            } => Some(fade()),
+            Self::Slide { direction, .. }
+            | Self::Eased {
+                kind: EasedKind::Slide(direction),
+                ..
+            } => Some(slide(*direction)),
+            Self::Custom(custom) => {
+                let (enter, exit) = (custom.enter, custom.exit);
+                Some((Arc::new(enter), Arc::new(exit)))
             }
         }
     }
@@ -214,42 +448,38 @@ pub struct TransitionContext {
 /// Apply a transition effect to an element.
 ///
 /// Given a `progress` value in `0.0..=1.0`, wraps `element` in a [`Div`]
-/// with the appropriate positional offset and opacity for the transition type.
-///
-/// - [`Transition::None`] — returns the element unchanged (opacity 1, no offset).
-/// - [`Transition::Fade`] — sets opacity to `progress`.
-/// - [`Transition::Slide`] — offsets by `(1 - progress) * 100px` in the
-///   appropriate direction while also fading in.
+/// styled like the entering page of the transition at that point: the same
+/// styling `RouterOutlet` animates (fade sets the opacity, slides offset by a
+/// fraction of the container's size, custom transitions use their enter
+/// style; easing is applied for [`Transition::Eased`]).
 pub fn apply_transition(element: impl IntoElement, transition: &Transition, progress: f32) -> Div {
-    // Always use consistent method chain to avoid recursion limit
-    // Calculate all values first, then apply them in one chain
-    let (x, y, opacity) = match transition {
-        Transition::None => (0.0, 0.0, 1.0),
-
-        Transition::Fade { .. } => {
-            // Fade effect — progress controls opacity
-            (0.0, 0.0, progress)
+    let layer = div().relative().size_full().child(element);
+    match transition.styles() {
+        None => layer,
+        Some((enter, _)) => {
+            let progress = progress.clamp(0.0, 1.0);
+            let progress = transition.easing().map_or(progress, |ease| ease(progress));
+            enter(layer, progress)
         }
+    }
+}
 
-        Transition::Slide { direction, .. } => {
-            let offset_px = (1.0 - progress) * 100.0;
-            let (x, y) = match direction {
-                SlideDirection::Left => (offset_px, 0.0),
-                SlideDirection::Right => (-offset_px, 0.0),
-                SlideDirection::Up => (0.0, offset_px),
-                SlideDirection::Down => (0.0, -offset_px),
-            };
-            (x, y, progress)
-        }
-    };
+/// Linear easing (no easing).
+#[must_use]
+pub const fn linear(t: f32) -> f32 {
+    t
+}
 
-    // Unified return type - same method chain for all branches
-    div()
-        .relative()
-        .left(px(x))
-        .top(px(y))
-        .opacity(opacity)
-        .child(element)
+/// Cubic ease-out easing: fast start, gentle stop.
+#[must_use]
+pub fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Cubic ease-in easing: gentle start, fast stop.
+#[must_use]
+pub fn ease_in_cubic(t: f32) -> f32 {
+    t * t * t
 }
 
 /// Cubic ease-in-out easing function (`t` in `0.0..=1.0`).

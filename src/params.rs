@@ -183,33 +183,7 @@ impl RouteParams {
     /// ```
     #[must_use]
     pub fn from_path(path: &str, pattern: &str) -> Self {
-        let mut params = Self::new();
-
-        // Split path and pattern into segments
-        let path_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        let pattern_segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-
-        // Must have same number of segments
-        if path_segments.len() != pattern_segments.len() {
-            return params;
-        }
-
-        // Match each segment
-        for (path_seg, pattern_seg) in path_segments.iter().zip(pattern_segments.iter()) {
-            if let Some(param_name) = pattern_seg.strip_prefix(':') {
-                // Dynamic segment - extract parameter
-                // Handle type constraints like :id<i32> -> extract "id"
-                let param_name = param_name
-                    .find('<')
-                    .map_or(param_name, |pos| &param_name[..pos]);
-                params.insert(param_name.to_string(), (*path_seg).to_string());
-            } else if pattern_seg != path_seg {
-                // Static segment mismatch - no match
-                return Self::new();
-            }
-        }
-
-        params
+        crate::matcher::match_full(pattern, path).unwrap_or_default()
     }
 }
 
@@ -344,14 +318,15 @@ impl QueryParams {
     pub fn from_query_string(query: &str) -> Self {
         let mut params = HashMap::new();
 
-        for pair in query.split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                // Simple URL decoding (replace %20 with space, etc.)
-                let key = decode_uri_component(key);
-                let value = decode_uri_component(value);
+        let query = query.strip_prefix('?').unwrap_or(query);
+        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+            // A bare key (`?debug`) is a flag with an empty value
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            // Simple URL decoding (replace %20 with space, etc.)
+            let key = decode_uri_component(key);
+            let value = decode_uri_component(value);
 
-                params.entry(key).or_insert_with(Vec::new).push(value);
-            }
+            params.entry(key).or_insert_with(Vec::new).push(value);
         }
 
         Self { params }
@@ -396,6 +371,25 @@ impl QueryParams {
     #[must_use]
     pub fn contains(&self, key: &str) -> bool {
         self.params.contains_key(key)
+    }
+
+    /// Iterate over all `(key, values)` pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.params.iter()
+    }
+
+    /// Parse the query part of a full location such as `/users?page=2#top`.
+    ///
+    /// ```
+    /// use gpui_navigator::QueryParams;
+    ///
+    /// let query = QueryParams::from_location("/users?page=2&debug#top");
+    /// assert_eq!(query.get_as::<u32>("page"), Some(2));
+    /// assert!(query.contains("debug"));
+    /// ```
+    #[must_use]
+    pub fn from_location(location: &str) -> Self {
+        Self::from_query_string(crate::matcher::split_path_and_query(location).1)
     }
 
     /// Serialize back into a query string.

@@ -2538,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-navigator"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "env_logger",
  "gpui",
@@ -2547,6 +2547,8 @@ dependencies = [
  "gpui-pre",
  "log",
  "lru",
+ "proptest",
+ "serde",
  "tokio",
  "tracing",
 ]

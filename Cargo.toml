@@ -1,6 +1,6 @@
 [package]
 name = "gpui-navigator"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Navigator for GPUI with transitions, nested routing, guards, and middleware"
@@ -18,11 +18,12 @@ exclude = [
     "target/",
     "*.md",
     "!README.md",
+    "examples/gpui-component/",
 ]
 
 [package.metadata.docs.rs]
 # Backends are mutually exclusive, so document the default one with every optional module enabled.
-features = ["gpui-02", "log", "guard", "middleware", "cache", "transition"]
+features = ["gpui-02", "log", "guard", "middleware", "cache", "transition", "serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lints.rust]
@@ -45,6 +46,7 @@ gpui_fast = { package = "gpui-fast", version = "0.1", optional = true }
 lru = { version = "0.16", optional = true }
 log = { version = "0.4", optional = true }
 tracing = { version = "0.1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 default = ["gpui-02", "log", "guard", "middleware", "cache", "transition"]
@@ -61,6 +63,8 @@ middleware = []
 transition = []
 # Optional LRU cache for route resolution
 cache = ["dep:lru"]
+# Serialize/Deserialize for HistoryEntry, HistoryState and HistorySnapshot
+serde = ["dep:serde"]
 # Logging backend - choose one (mutually exclusive)
 log = ["dep:log"]
 tracing = ["dep:tracing"]
@@ -73,6 +77,11 @@ test-support = ["gpui?/test-support", "gpui_pre?/test-support", "gpui_fast?/test
 gpui-navigator = { path = ".", default-features = false, features = ["test-support"] }
 env_logger = "0.11"
 tokio = { version = "1", features = ["rt", "macros"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+[[bench]]
+name = "resolve"
+harness = false
 
 [[example]]
 name = "transition_demo"
@@ -107,4 +116,9 @@ required-features = ["gpui-02"]
 [[example]]
 name = "lifecycle_demo"
 path = "examples/lifecycle_demo.rs"
+required-features = ["gpui-02"]
+
+[[example]]
+name = "desktop_demo"
+path = "examples/desktop_demo.rs"
 required-features = ["gpui-02"]

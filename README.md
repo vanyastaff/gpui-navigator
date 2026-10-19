@@ -21,6 +21,7 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
   - [Programmatic Navigation](#programmatic-navigation)
   - [Fluent API](#fluent-api)
   - [Named Routes](#named-routes)
+  - [Typed Routes](#typed-routes)
 - [Widgets](#widgets)
   - [RouterView](#routerview)
   - [RouterOutlet](#routeroutlet)
@@ -30,12 +31,16 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
   - [Index Routes](#index-routes)
   - [Parameter Inheritance](#parameter-inheritance)
 - [Route Parameters](#route-parameters)
+  - [Path Patterns](#path-patterns)
   - [Path Parameters](#path-parameters)
   - [Query Parameters](#query-parameters)
 - [Transitions](#transitions)
 - [Route Guards](#route-guards)
+  - [Async Guards](#async-guards)
 - [Middleware](#middleware)
 - [Route Lifecycle](#route-lifecycle)
+  - [Asking the Page: `can_leave`](#asking-the-page-can_leave)
+- [Desktop Navigation](#desktop-navigation)
 - [Error Handling](#error-handling)
 - [Caching](#caching)
 - [Feature Flags](#feature-flags)
@@ -46,16 +51,18 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
 
 ## Features
 
-- **Smooth Transitions** — Fade, slide (4 directions) with configurable duration and dual enter/exit animation
+- **Smooth Transitions** — Fade, slide (4 directions), easing curves and custom transitions; slides mirror when going back
 - **Nested Routing** — Unlimited nesting depth with `RouterOutlet`, named outlets, index routes
 - **Stateful Components** — `Route::component()` auto-caches GPUI entities across navigations
-- **Route Guards** — `AuthGuard`, `RoleGuard`, `PermissionGuard`, composable `NotGuard`
+- **Route Guards** — `AuthGuard`, `RoleGuard`, `PermissionGuard`, composable `NotGuard`, async guards
+- **Path Patterns** — `:params`, typed constraints (`:id<int>`), `*` catch-alls; query strings just work
 - **Middleware** — Before/after navigation hooks with priority ordering
 - **Named Routes** — Navigate by name with parameter substitution
-- **Route Lifecycle** — `on_enter`, `on_exit`, `can_deactivate` hooks
+- **Route Lifecycle** — `on_enter`, `on_exit`, `can_deactivate` hooks on every nesting level, plus `can_leave` that asks the page itself
+- **Desktop Navigation** — back/forward key bindings, mouse side buttons, route change events, history persistence
 - **LRU Cache** — Route resolution caching with hit-rate stats
 - **Error Pages** — Built-in styled 404 and error pages, fully customizable
-- **RouterLink** — Navigation links with automatic active-state styling
+- **RouterLink** — Navigation links with automatic active-state styling, exact or per-section
 - **Type-safe Params** — `get_as::<T>()` for parsed parameter extraction
 - **Logging** — `log` or `tracing` backend (mutually exclusive, feature-gated)
 
@@ -63,7 +70,7 @@ Declarative client-side navigation for [GPUI](https://gpui.rs) (Zed's GPU-accele
 
 ```toml
 [dependencies]
-gpui-navigator = "0.2"
+gpui-navigator = "0.2.1"
 gpui = "0.2"
 ```
 
@@ -277,9 +284,24 @@ Navigator::pop(cx);
 Navigator::forward(cx);
 
 // Query state
-let path: String = Navigator::current_path(cx);
+let path: String = Navigator::current_path(cx);   // includes any "?query"
+let page: Option<u32> = Navigator::query(cx).get_as("page");
+let id: Option<u64> = Navigator::params(cx).get_as("id");
 let can_back: bool = Navigator::can_pop(cx);
 let can_fwd: bool = Navigator::can_go_forward(cx);
+```
+
+Every method has a `try_` variant (`try_push`, `try_replace`, `try_back`, `try_forward`,
+`try_push_named`) that returns the [`NavigationResult`](#error-handling), so you can tell
+when a guard blocked the navigation:
+
+```rust
+match Navigator::try_push(cx, "/admin") {
+    NavigationResult::Success { .. } => {}
+    NavigationResult::Blocked { reason, .. } => show_toast(cx, reason),
+    NavigationResult::Pending { .. } => {} // async guards are running
+    _ => {}
+}
 ```
 
 ### Fluent API
@@ -312,6 +334,34 @@ Navigator::push_named(cx, "user-post", &params);
 // Generate URL without navigating
 let url = Navigator::url_for(cx, "user-post", &params);
 // Some("/users/42/posts/7")
+```
+
+Names work on nested routes too: `url_for` builds the full path from the parent routes.
+It returns `None` if the name is unknown or a parameter is missing.
+
+### Typed Routes
+
+Describe your screens as an enum and implement `IntoRoute`; every `Navigator` method
+accepts it, so a typo in a path becomes a compile error:
+
+```rust
+enum AppRoute {
+    Home,
+    Project { id: u32 },
+    Projects { page: u32 },
+}
+
+impl IntoRoute for AppRoute {
+    fn into_route(self) -> RouteDescriptor {
+        match self {
+            Self::Home => "/".into_route(),
+            Self::Project { id } => format!("/projects/{id}").into_route(),
+            Self::Projects { page } => format!("/projects?page={page}").into_route(),
+        }
+    }
+}
+
+Navigator::push(cx, AppRoute::Project { id: 7 });
 ```
 
 ## Widgets
@@ -374,6 +424,20 @@ fn navbar(cx: &mut Context<'_, MyView>) -> impl IntoElement {
 }
 ```
 
+Links navigate when the mouse button is released over them. By default a link is active only
+on its exact path (the query string is ignored); use `ActiveMatch::Prefix` for a sidebar entry
+that should stay highlighted for a whole section:
+
+```rust
+RouterLink::new("/settings")
+    .active_match(ActiveMatch::Prefix) // also active on /settings/profile
+    .child("Settings")
+    .build(cx)
+```
+
+`is_link_active(current, target, mode)` exposes the same check for your own widgets (for
+example gpui-component `Button`s, see `examples/gpui-component`).
+
 Shorthand:
 
 ```rust
@@ -389,15 +453,16 @@ init_router(cx, |router| {
     router.add_route(
         Route::new("/dashboard", |_, _, _| dashboard_layout().into_any_element())
             .children(vec![
-                Route::view("/dashboard/overview", || overview().into_any_element()).into(),
-                Route::view("/dashboard/settings", || settings().into_any_element()).into(),
-                Route::new("/dashboard/users/:id", |_, _, p| user_detail(p).into_any_element()).into(),
+                Route::view("overview", || overview().into_any_element()).into(),
+                Route::view("settings", || settings().into_any_element()).into(),
+                Route::new("users/:id", |_, _, p| user_detail(p).into_any_element()).into(),
             ])
     );
 });
 ```
 
-Navigating to `/dashboard/settings` renders the dashboard layout with settings inside its `RouterOutlet`.
+Child paths are relative to their parent. Navigating to `/dashboard/settings` renders the
+dashboard layout with settings inside its `RouterOutlet`.
 
 ### Named Outlets
 
@@ -436,6 +501,28 @@ If a child defines a parameter with the same name as a parent, the child value t
 
 ## Route Parameters
 
+### Path Patterns
+
+| Segment | Matches | Captured as |
+|---|---|---|
+| `users` | exactly `users` | — |
+| `:id` | any one segment | `id` |
+| `:id<int>` | one segment that satisfies the constraint | `id` |
+| `*rest` | the rest of the path (zero or more segments) | `rest` |
+| `*` | the rest of the path | `*` |
+
+Constraints: `int`/`i64`, `i32`, `uint`/`u64`, `u32`, `usize`, `float`/`f64`, `bool`, `uuid`,
+`alpha`, `alnum`, `slug`. A segment that fails its constraint lets the next route try, so
+`/posts/:id<int>` and `/posts/:slug` can live side by side. A wildcard must be the last
+segment; `Route::view("*", ...)` registered last makes a catch-all 404 page.
+
+Routes are tried in registration order. When a route can never match because an earlier
+sibling already covers all its paths (`/:id` before `/about`), a warning is logged at
+registration.
+
+The query string (`?…`) and fragment (`#…`) never take part in matching:
+`/users?page=2` renders the `/users` route, and `Navigator::query(cx)` returns `page=2`.
+
 ### Path Parameters
 
 Define with `:name` syntax. Extract with `RouteParams`:
@@ -466,7 +553,8 @@ let merged = RouteParams::merge(&parent_params, &child_params);
 
 ### Query Parameters
 
-Parse and serialize query strings:
+Read the current location's query with `Navigator::query(cx)` (or
+`QueryParams::from_location(path)`). Parse and serialize query strings directly:
 
 ```rust
 let qp = QueryParams::from_query_string("?search=rust&page=2&tag=web&tag=api");
@@ -502,6 +590,22 @@ Available transitions:
 | `Transition::slide_right(ms)` | Slide from left to right |
 | `Transition::slide_up(ms)` | Slide from bottom to top |
 | `Transition::slide_down(ms)` | Slide from top to bottom |
+
+Ease any transition, or style the entering and leaving page yourself (progress goes 0 → 1):
+
+```rust
+Transition::slide_left(250).with_easing(ease_out_cubic)
+
+Transition::custom(
+    300,
+    |page, p| page.opacity(p).top(px(24.0 * (1.0 - p))),
+    |page, p| page.opacity(1.0 - p),
+)
+```
+
+Transitions are plain data (functions, not capturing closures), so they fit in `const` items.
+When navigating back, slides play mirrored (a page that slid in from the right leaves to the
+right); turn this off with `router.set_reverse_transitions_on_back(false)`.
 
 Override a transition for a single navigation:
 
@@ -549,7 +653,35 @@ Route::new("/custom", handler)
     }))
 ```
 
-Guards have a `priority()` (higher runs first). Multiple guards on a route run in priority order; the first non-Continue result wins.
+Guards have a `priority()` (higher runs first). Guards are collected from every level of the
+route being opened (a guard on `/dashboard` also protects `/dashboard/settings`) and run in
+priority order; the first non-Continue result wins. A redirect from a `replace` stays a replace,
+so it does not add a history entry.
+
+### Async Guards
+
+When the decision needs I/O (refreshing a session token, asking a server), use
+`async_guard_fn`. The navigation reports `NavigationResult::Pending` and the current page stays
+until the future resolves; a newer navigation cancels it.
+
+```rust
+Route::view("/account", account_page)
+    .guard(async_guard_fn(|cx, _request| {
+        let session = cx.global::<Session>().clone();
+        async move {
+            if session.refresh().await.is_ok() {
+                NavigationAction::Continue
+            } else {
+                NavigationAction::redirect("/login")
+            }
+        }
+    }))
+```
+
+The future runs on GPUI's foreground executor (move heavy work to
+`cx.background_executor()`). `Navigator::is_pending(cx)` tells you whether to show a spinner.
+Async guards run when navigating through `Navigator` or `navigate`; custom guards can
+implement `RouteGuard::check_async` directly.
 
 ## Middleware
 
@@ -614,6 +746,34 @@ Route::view("/editor", || editor().into_any_element())
     .lifecycle(ConfirmExit)
 ```
 
+Hooks run on every nesting level that changes: navigating from `/settings/profile` to
+`/settings/account` calls `on_exit` on `profile` and `on_enter` on `account`, while `settings`
+stays mounted. The full order of a navigation is:
+
+1. guards of the target route and its parents (sync, then async)
+2. `can_deactivate` on the levels being left (deepest first)
+3. `on_exit` on the levels being left (deepest first)
+4. `before_navigation` middleware
+5. history update
+6. `on_enter` on the levels being entered (outermost first); a deny undoes the navigation
+7. `after_navigation` middleware
+
+### Asking the Page: `can_leave`
+
+For `Route::component*` pages, `can_leave` hands you the page entity itself, so the check can
+look at the page's own state:
+
+```rust
+Route::component_with_context("/editor", Editor::new)
+    .can_leave(|editor: &Editor, _cx| {
+        if editor.is_dirty() {
+            NavigationAction::deny("Unsaved changes")
+        } else {
+            NavigationAction::Continue
+        }
+    })
+```
+
 `NavigationAction` variants:
 
 | Variant | Effect |
@@ -622,6 +782,51 @@ Route::view("/editor", || editor().into_any_element())
 | `NavigationAction::deny(reason)` | Block navigation |
 | `NavigationAction::redirect(path)` | Redirect to a different route |
 | `NavigationAction::redirect_with_reason(path, reason)` | Redirect with explanation |
+
+## Desktop Navigation
+
+```rust
+Application::new().run(|cx: &mut App| {
+    init_router(cx, |router| { /* routes */ });
+
+    // alt-left / alt-right everywhere, plus cmd-[ / cmd-] on macOS
+    bind_navigation_keys(cx);
+
+    // Fires once per completed navigation (not on re-renders)
+    on_route_change(cx, |event, cx| {
+        log::info!("{:?} {} → {}", event.direction, event.from.as_deref().unwrap_or("-"), event.to);
+    })
+    .detach();
+});
+
+// Mouse back/forward side buttons over the root view
+impl Render for AppShell {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        with_mouse_navigation(div().size_full())
+            .child(router_view(window, cx))
+            .child(router_debug_panel(cx)) // location, match stack, history, cache
+    }
+}
+```
+
+`GoBack` / `GoForward` are regular GPUI actions: bind your own keys with
+`register_navigation_actions(cx)` and `cx.bind_keys(...)`.
+
+Save and restore history between launches (`HistorySnapshot` implements serde's traits with
+the `serde` feature):
+
+```rust
+let snapshot = cx.global::<GlobalRouter>().history_snapshot();
+// ... later
+cx.update_global::<GlobalRouter, _>(|router, _| router.restore_history(snapshot));
+```
+
+`HistoryState` can carry small typed values with each entry:
+
+```rust
+Navigator::push_with_state(cx, "/doc/7", HistoryState::new().with("scroll_y", 420));
+let scroll: Option<f32> = Navigator::current_entry(cx).state.and_then(|s| s.get_as("scroll_y"));
+```
 
 ## Error Handling
 
@@ -651,9 +856,26 @@ let pages = DefaultPages::new()
 | `Success { path }` | Route matched and rendered |
 | `NotFound { path }` | No route matched the path |
 | `Blocked { reason, redirect }` | Guard or lifecycle denied navigation |
+| `Pending { path }` | Waiting on async guards; finishes on its own |
 | `Error(NavigationError)` | Internal error |
 
 ## Caching
+
+### Page Entities
+
+`Route::component*` pages are cached so their state survives navigation. The cache keeps the
+128 most recently shown pages by default; tune it per route or globally:
+
+```rust
+// Start fresh every time the user opens the page
+Route::component("/search", SearchPage::new).keep_alive(false)
+
+router.set_component_cache_capacity(32);
+router.evict_components("/users/:id"); // drop all cached user pages
+router.clear_component_cache();
+```
+
+### Route Resolution
 
 > Requires feature `cache` (enabled by default, depends on `lru`)
 
@@ -677,6 +899,7 @@ println!("Parent hits: {}, misses: {}", stats.parent_hits, stats.parent_misses);
 | `cache` | yes | LRU route resolution cache | `lru` |
 | `log` | yes | Logging via the `log` crate | `log` |
 | `tracing` | no | Logging via `tracing` (mutually exclusive with `log`) | `tracing` |
+| `serde` | no | `Serialize`/`Deserialize` for `HistoryEntry`, `HistoryState`, `HistorySnapshot` | `serde` |
 
 ## Examples
 
@@ -701,6 +924,17 @@ cargo run --example middleware_demo --all-features
 
 # RouteLifecycle: on_enter, on_exit, can_deactivate
 cargo run --example lifecycle_demo --all-features
+
+# Typed routes, keyboard/mouse back-forward, async guard, can_leave, debug panel
+cargo run --example desktop_demo
+```
+
+`examples/gpui-component` is a standalone app (its own `Cargo.toml`) that combines the router
+with [gpui-component](https://github.com/longbridge/gpui-component) widgets: a sidebar of
+buttons, nested settings routes and a form whose `Input` keeps its text across navigation:
+
+```bash
+cd examples/gpui-component && cargo run
 ```
 
 ## Architecture Overview
@@ -723,7 +957,7 @@ cargo run --example lifecycle_demo --all-features
 
 1. `init_router` registers routes in a global `RouterState`
 2. `Navigator::push("/path")` triggers route matching via `resolve_match_stack`
-3. Guards and middleware run in priority order
+3. Guards, lifecycle hooks and middleware of the matched levels run (see [Route Lifecycle](#route-lifecycle))
 4. `RouterView` renders the root match; `RouterOutlet` renders children at each nesting depth
 5. Transitions animate between the old and new content
 
@@ -744,6 +978,8 @@ cargo run --example lifecycle_demo --all-features
 | `transition.rs` | `Transition` enum and `TransitionConfig` |
 | `lifecycle.rs` | `RouteLifecycle` trait, `NavigationAction` enum |
 | `cache.rs` | LRU cache for route resolution with `CacheStats` |
+| `matcher.rs` | Path pattern syntax: params, constraints, wildcards, query splitting |
+| `actions.rs` | `GoBack`/`GoForward` actions, key bindings, mouse buttons, `on_route_change` |
 | `error.rs` | `NavigationError`, `NavigationResult`, `ErrorHandlers` |
 | `logging.rs` | Unified logging macros (`log` / `tracing` backends) |
 
@@ -762,6 +998,8 @@ Full API documentation is available on [docs.rs](https://docs.rs/gpui-navigator)
 | `Navigator::forward(cx)` | Go forward |
 | `Navigator::current_path(cx)` | Get current path |
 | `Navigator::push_named(cx, name, params)` | Navigate by route name |
+| `Navigator::try_push(cx, path)` | Navigate and get the `NavigationResult` |
+| `Navigator::query(cx)` / `Navigator::params(cx)` | Current query / route params |
 | `Navigator::of(cx).push(p).push(p2)` | Fluent chaining |
 | `Route::view(path, closure)` | Stateless route |
 | `Route::component(path, factory)` | Stateful route (Entity cached) |
@@ -775,6 +1013,11 @@ Full API documentation is available on [docs.rs](https://docs.rs/gpui-navigator)
 | `.guard(AuthGuard::new(check, redirect))` | Add guard |
 | `.middleware(impl RouteMiddleware)` | Add middleware |
 | `.lifecycle(impl RouteLifecycle)` | Add lifecycle hooks |
+| `.can_leave(\|page: &T, cx\| ...)` | Ask the page before leaving it |
+| `.keep_alive(false)` | Drop the page entity when leaving |
+| `.guard(async_guard_fn(...))` | Async guard |
+| `bind_navigation_keys(cx)` | Back/forward shortcuts |
+| `on_route_change(cx, f)` | Callback after each navigation |
 | `router_view(window, cx)` | Root route renderer (`RouterView` as a view) |
 | `router_outlet(window, cx, key)` | Child route renderer (`RouterOutlet` as a view) |
 | `RouterOutlet::named("n")` | Named outlet |
