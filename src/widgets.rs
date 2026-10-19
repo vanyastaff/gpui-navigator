@@ -34,13 +34,11 @@ use crate::{debug_log, trace_log};
 use gpui::*;
 
 #[cfg(feature = "transition")]
-use crate::transition::{SlideDirection, Transition};
+use crate::transition::Transition;
 
 #[cfg(feature = "transition")]
 use gpui::{Animation, AnimationExt};
 
-#[cfg(feature = "transition")]
-use std::time::Duration;
 
 // ============================================================================
 // RouterOutlet (MatchStack-based — no RefCell)
@@ -315,10 +313,14 @@ impl Render for RouterOutlet {
 
         // Take the one-shot transition override before the immutable borrow.
         // Split into two statements to avoid overlapping borrows on `cx`.
+        // Only touch the global when there is something to take: updating it
+        // notifies every `observe_global::<GlobalRouter>` observer.
         #[cfg(feature = "transition")]
-        let has_router = cx.try_global::<GlobalRouter>().is_some();
+        let has_override = cx
+            .try_global::<GlobalRouter>()
+            .is_some_and(GlobalRouter::has_next_transition);
         #[cfg(feature = "transition")]
-        let global_override: Option<Transition> = if has_router {
+        let global_override: Option<Transition> = if has_override {
             cx.update_global::<GlobalRouter, _>(|router, _| router.take_next_transition())
         } else {
             None
@@ -354,8 +356,15 @@ impl Render for RouterOutlet {
 
             // Priority: GlobalRouter override > TransitionConfig override_next > route default
             #[cfg(feature = "transition")]
-            let transition =
-                Some(global_override.unwrap_or_else(|| entry.route.transition.active().clone()));
+            let transition = {
+                let transition =
+                    global_override.unwrap_or_else(|| entry.route.transition.active().clone());
+                Some(if router.is_navigating_back() {
+                    transition.reversed()
+                } else {
+                    transition
+                })
+            };
             #[cfg(not(feature = "transition"))]
             let transition = None::<()>;
 
@@ -403,13 +412,13 @@ fn build_exit_element(depth: usize, window: &mut Window, cx: &mut App) -> Option
 /// Render content with a cross-transition animation (enter + exit).
 ///
 /// When `exit_content` is provided, both old and new content are rendered
-/// in a stacked container with opposing animations:
+/// in a stacked container, each animated with the transition's style:
 /// - **Fade**: old fades out (1→0), new fades in (0→1)
 /// - **Slide Left**: old slides out left, new slides in from right
 /// - **Slide Right**: old slides out right, new slides in from left
 /// - **Slide Up/Down**: same pattern on the vertical axis
+/// - **Custom**: the user's enter/exit styles
 #[cfg(feature = "transition")]
-#[allow(clippy::too_many_lines)]
 fn render_with_transition(
     enter_content: AnyElement,
     exit_content: Option<AnyElement>,
@@ -417,166 +426,36 @@ fn render_with_transition(
     outlet_name: Option<&String>,
     counter: u32,
 ) -> AnyElement {
-    match transition {
-        Transition::Fade { duration_ms, .. } => {
-            let duration = *duration_ms;
-            let enter_id =
-                SharedString::from(format!("outlet_fade_enter_{outlet_name:?}_{counter}"));
-            let exit_id = SharedString::from(format!("outlet_fade_exit_{outlet_name:?}_{counter}"));
+    let Some((enter_style, exit_style)) = transition.styles() else {
+        return enter_content;
+    };
 
-            let mut container = div().relative().w_full().h_full();
-
-            // Exit layer: old content fades out 1 → 0
-            if let Some(exit) = exit_content {
-                container = container.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .w_full()
-                        .h_full()
-                        .child(exit)
-                        .with_animation(
-                            exit_id,
-                            Animation::new(Duration::from_millis(duration)),
-                            |this, delta| this.opacity(1.0 - delta.clamp(0.0, 1.0)),
-                        ),
-                );
-            }
-
-            // Enter layer: new content fades in 0 → 1
-            container = container.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .w_full()
-                    .h_full()
-                    .child(enter_content)
-                    .opacity(0.0)
-                    .with_animation(
-                        enter_id,
-                        Animation::new(Duration::from_millis(duration)),
-                        |this, delta| this.opacity(delta.clamp(0.0, 1.0)),
-                    ),
-            );
-
-            container.into_any_element()
-        }
-        Transition::Slide {
-            duration_ms,
-            direction,
-            ..
-        } => {
-            let duration = *duration_ms;
-            let enter_id =
-                SharedString::from(format!("outlet_slide_enter_{outlet_name:?}_{counter}"));
-            let exit_id =
-                SharedString::from(format!("outlet_slide_exit_{outlet_name:?}_{counter}"));
-
-            match direction {
-                SlideDirection::Left | SlideDirection::Right => {
-                    let is_left = matches!(direction, SlideDirection::Left);
-                    // Enter: slides from +1 → 0 (left) or -1 → 0 (right)
-                    let enter_start: f32 = if is_left { 1.0 } else { -1.0 };
-                    // Exit: slides from 0 → -1 (left) or 0 → +1 (right)
-                    let exit_end: f32 = if is_left { -1.0 } else { 1.0 };
-
-                    let mut container = div().relative().w_full().h_full().overflow_hidden();
-
-                    if let Some(exit) = exit_content {
-                        container = container.child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .w_full()
-                                .h_full()
-                                .child(exit)
-                                .with_animation(
-                                    exit_id,
-                                    Animation::new(Duration::from_millis(duration)),
-                                    move |this, delta| {
-                                        let progress = delta.clamp(0.0, 1.0);
-                                        this.left(relative(exit_end * progress))
-                                    },
-                                ),
-                        );
-                    }
-
-                    container = container.child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .w_full()
-                            .h_full()
-                            .child(enter_content)
-                            .left(relative(enter_start))
-                            .with_animation(
-                                enter_id,
-                                Animation::new(Duration::from_millis(duration)),
-                                move |this, delta| {
-                                    let progress = delta.clamp(0.0, 1.0);
-                                    this.left(relative(enter_start * (1.0 - progress)))
-                                },
-                            ),
-                    );
-
-                    container.into_any_element()
-                }
-                SlideDirection::Up | SlideDirection::Down => {
-                    let is_up = matches!(direction, SlideDirection::Up);
-                    let enter_start: f32 = if is_up { 1.0 } else { -1.0 };
-                    let exit_end: f32 = if is_up { -1.0 } else { 1.0 };
-
-                    let mut container = div().relative().w_full().h_full().overflow_hidden();
-
-                    if let Some(exit) = exit_content {
-                        container = container.child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .w_full()
-                                .h_full()
-                                .child(exit)
-                                .with_animation(
-                                    exit_id,
-                                    Animation::new(Duration::from_millis(duration)),
-                                    move |this, delta| {
-                                        let progress = delta.clamp(0.0, 1.0);
-                                        this.top(relative(exit_end * progress))
-                                    },
-                                ),
-                        );
-                    }
-
-                    container = container.child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .w_full()
-                            .h_full()
-                            .child(enter_content)
-                            .top(relative(enter_start))
-                            .with_animation(
-                                enter_id,
-                                Animation::new(Duration::from_millis(duration)),
-                                move |this, delta| {
-                                    let progress = delta.clamp(0.0, 1.0);
-                                    this.top(relative(enter_start * (1.0 - progress)))
-                                },
-                            ),
-                    );
-
-                    container.into_any_element()
-                }
-            }
-        }
-        Transition::None => enter_content,
+    let mut animation = Animation::new(transition.duration());
+    if let Some(easing) = transition.easing() {
+        animation = animation.with_easing(easing);
     }
+    let enter_id = SharedString::from(format!("outlet_enter_{outlet_name:?}_{counter}"));
+    let exit_id = SharedString::from(format!("outlet_exit_{outlet_name:?}_{counter}"));
+    let layer = || div().absolute().top_0().left_0().w_full().h_full();
+
+    let mut container = div().relative().w_full().h_full().overflow_hidden();
+
+    // Exit layer: old content animates out
+    if let Some(exit) = exit_content {
+        container = container.child(layer().child(exit).with_animation(
+            exit_id,
+            animation.clone(),
+            move |this, delta| exit_style(this, delta.clamp(0.0, 1.0)),
+        ));
+    }
+
+    // Enter layer: new content animates in (styled at progress 0 before the first frame)
+    let initial = enter_style(layer().child(enter_content), 0.0);
+    container
+        .child(initial.with_animation(enter_id, animation, move |this, delta| {
+            enter_style(this, delta.clamp(0.0, 1.0))
+        }))
+        .into_any_element()
 }
 
 // ============================================================================
@@ -786,8 +665,49 @@ pub struct RouterLink {
     path: SharedString,
     /// Optional custom styling when link is active
     active_class: Option<Box<dyn Fn(Div) -> Div>>,
+    /// How the current path is compared with `path`
+    active_match: ActiveMatch,
     /// Child elements
     children: Vec<AnyElement>,
+}
+
+/// How a [`RouterLink`] decides that it is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ActiveMatch {
+    /// Active only on exactly the link's path (query string and trailing slash ignored).
+    #[default]
+    Exact,
+    /// Also active on any path below the link's path, e.g. `/settings`
+    /// is active on `/settings/profile`. Useful for sidebar sections.
+    Prefix,
+}
+
+/// Return `true` if a link to `target` counts as active at `current`.
+///
+/// Query strings, fragments and leading/trailing slashes are ignored.
+///
+/// ```
+/// use gpui_navigator::{is_link_active, ActiveMatch};
+///
+/// assert!(is_link_active("/users?page=2", "/users", ActiveMatch::Exact));
+/// assert!(is_link_active("/settings/profile", "/settings", ActiveMatch::Prefix));
+/// assert!(!is_link_active("/settingsx", "/settings", ActiveMatch::Prefix));
+/// ```
+#[must_use]
+pub fn is_link_active(current: &str, target: &str, mode: ActiveMatch) -> bool {
+    let current = crate::matcher::path_only(current).trim_matches('/');
+    let target = crate::matcher::path_only(target).trim_matches('/');
+    match mode {
+        ActiveMatch::Exact => current == target,
+        ActiveMatch::Prefix => {
+            target.is_empty()
+                || current == target
+                || current
+                    .strip_prefix(target)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        }
+    }
 }
 
 impl RouterLink {
@@ -796,8 +716,15 @@ impl RouterLink {
         Self {
             path: path.into(),
             active_class: None,
+            active_match: ActiveMatch::Exact,
             children: Vec::new(),
         }
+    }
+
+    /// Choose how the link decides it is active (default [`ActiveMatch::Exact`]).
+    pub const fn active_match(mut self, mode: ActiveMatch) -> Self {
+        self.active_match = mode;
+        self
     }
 
     /// Add a child element
@@ -816,9 +743,11 @@ impl RouterLink {
     pub fn build<V: 'static>(self, cx: &mut Context<'_, V>) -> Div {
         let path = self.path.clone();
         let current_path = Navigator::current_path(cx);
-        let is_active = current_path == path.as_ref();
+        let is_active = is_link_active(&current_path, &path, self.active_match);
 
-        let mut link = div().cursor_pointer().on_mouse_down(
+        // Navigate on release, like a button: a press that is dragged away
+        // and released elsewhere does not navigate.
+        let mut link = div().cursor_pointer().on_mouse_up(
             MouseButton::Left,
             cx.listener(move |_view, _event, _window, cx| {
                 Navigator::push(cx, path.to_string());
@@ -850,7 +779,7 @@ pub fn router_link<V: 'static>(
     let path_str: SharedString = path.into();
     let label_str: SharedString = label.into();
     let current_path = Navigator::current_path(cx);
-    let is_active = current_path == path_str.as_ref();
+    let is_active = is_link_active(&current_path, &path_str, ActiveMatch::Exact);
 
     div()
         .cursor_pointer()
@@ -861,7 +790,7 @@ pub fn router_link<V: 'static>(
         })
         .hover(|this| this.text_color(rgb(0x21_96_f3)))
         .child(label_str)
-        .on_mouse_down(
+        .on_mouse_up(
             MouseButton::Left,
             cx.listener(move |_view, _event, _window, cx| {
                 Navigator::push(cx, path_str.to_string());

@@ -157,6 +157,9 @@ extern crate gpui_pre as gpui;
 // Logging abstraction
 pub mod logging;
 
+// Back/forward actions, mouse navigation, route change notifications
+pub mod actions;
+
 // Cache (optional)
 #[cfg(feature = "cache")]
 pub mod cache;
@@ -193,6 +196,10 @@ pub mod widgets;
 mod context;
 
 // Re-export main types for convenient access
+pub use actions::{
+    bind_navigation_keys, on_route_change, register_navigation_actions, with_mouse_navigation,
+    GoBack, GoForward,
+};
 #[cfg(feature = "cache")]
 pub use cache::{CacheStats, RouteCache, RouteId};
 pub use context::{
@@ -205,7 +212,7 @@ pub use guards::{
     async_guard_fn, guard_fn, AsyncFnGuard, AuthGuard, GuardBuilder, GuardFuture, Guards, NotGuard,
     PermissionGuard, RoleGuard, RouteGuard,
 };
-pub use history::{History, HistoryEntry, HistoryState};
+pub use history::{History, HistoryEntry, HistorySnapshot, HistoryState};
 pub use lifecycle::{NavigationAction, RouteLifecycle};
 #[cfg(feature = "middleware")]
 pub use middleware::{middleware_fn, RouteMiddleware};
@@ -219,9 +226,12 @@ pub use route::{
 };
 pub use state::RouterState;
 #[cfg(feature = "transition")]
-pub use transition::{SlideDirection, Transition, TransitionConfig};
+pub use transition::{
+    ease_in_cubic, ease_in_out_cubic, ease_out_cubic, linear, CustomTransition, EasedKind, Easing,
+    SlideDirection, Transition, TransitionConfig, TransitionStyle,
+};
 pub use widgets::{
-    render_router_outlet, router_link, router_outlet, router_outlet_named, router_view,
+    is_link_active, render_router_outlet, ActiveMatch, router_link, router_outlet, router_outlet_named, router_view,
     DefaultPages, RouterLink, RouterOutlet, RouterView,
 };
 

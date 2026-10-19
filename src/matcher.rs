@@ -318,7 +318,10 @@ mod tests {
     fn query_and_fragment_are_ignored() {
         assert!(m("/users", "/users?tab=1").is_some());
         assert!(m("/users", "/users#top").is_some());
-        assert!(m("/users/:id", "/users/7?x=1#y").unwrap().get("id") == Some(&"7".into()));
+        assert_eq!(
+            m("/users/:id", "/users/7?x=1#y").unwrap().get("id"),
+            Some(&"7".to_string())
+        );
         assert_eq!(split_path_and_query("/a?b=1#c"), ("/a", "b=1"));
     }
 

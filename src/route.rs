@@ -1038,7 +1038,7 @@ fn match_path(pattern: &str, path: &str) -> Option<RouteMatch> {
     let (_, query) = crate::matcher::split_path_and_query(path);
 
     let mut route_match = RouteMatch::new(path.to_string());
-    route_match.params = params.all().clone();
+    route_match.params.clone_from(params.all());
     for (key, values) in crate::QueryParams::from_query_string(query).iter() {
         if let Some(first) = values.first() {
             route_match.query.insert(key.clone(), first.clone());

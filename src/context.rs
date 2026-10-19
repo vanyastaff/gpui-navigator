@@ -280,6 +280,32 @@ impl GlobalRouter {
         self.navigate_with_pipeline(intent, cx, 0)
     }
 
+    /// Capture the navigation history, e.g. to persist it on quit.
+    #[must_use]
+    pub fn history_snapshot(&self) -> crate::history::HistorySnapshot {
+        crate::history::HistorySnapshot::of(self.state.history())
+    }
+
+    /// Restore a history snapshot and show its current entry.
+    ///
+    /// Guards and lifecycle hooks are not run (this restores a previous
+    /// session rather than navigating). Returns `false` and changes nothing
+    /// if the snapshot is empty or its cursor is out of range.
+    pub fn restore_history(&mut self, snapshot: crate::history::HistorySnapshot) -> bool {
+        if !self.state.restore_history(snapshot) {
+            return false;
+        }
+        self.cancel_pending();
+        #[cfg(feature = "cache")]
+        self.nested_cache.clear();
+        #[cfg(feature = "transition")]
+        {
+            self.previous_stack = None;
+        }
+        self.re_resolve();
+        true
+    }
+
     /// Return the current [`HistoryEntry`] (path + optional state data).
     #[must_use]
     pub fn current_entry(&self) -> &HistoryEntry {
@@ -892,7 +918,6 @@ impl GlobalRouter {
     }
 
     /// Get a reference to the current error handlers.
-    #[must_use]
     pub const fn error_handlers(&self) -> &ErrorHandlers {
         &self.error_handlers
     }
@@ -985,10 +1010,9 @@ impl GlobalRouter {
         self.component_cache.iter().find_map(|(key, cached)| {
             let rest = key.strip_prefix(&prefix)?;
             // `route:{path}:{TypeId}` or `route:{path}:{TypeId}?{params}`
-            match rest.find('?') {
-                None => Some(&cached.view),
-                Some(pos) => (rest[pos..] == with_params).then_some(&cached.view),
-            }
+            rest.find('?').map_or(Some(&cached.view), |pos| {
+                (rest[pos..] == with_params).then_some(&cached.view)
+            })
         })
     }
 
@@ -1032,6 +1056,24 @@ impl GlobalRouter {
     #[cfg(feature = "transition")]
     pub const fn take_next_transition(&mut self) -> Option<Transition> {
         self.next_transition.take()
+    }
+
+    /// Mirror slide transitions when navigating back (default `true`), so a
+    /// page that slid in from the right slides back out to the right.
+    #[cfg(feature = "transition")]
+    pub const fn set_reverse_transitions_on_back(&mut self, reverse: bool) {
+        self.reverse_transitions_on_back = reverse;
+    }
+
+    /// Whether the last navigation went back and transitions should be mirrored.
+    #[cfg(feature = "transition")]
+    #[must_use]
+    pub fn is_navigating_back(&self) -> bool {
+        self.reverse_transitions_on_back
+            && self
+                .last_change
+                .as_ref()
+                .is_some_and(|event| event.direction == crate::NavigationDirection::Back)
     }
 
     /// Check if there's a transition override set.
@@ -1137,7 +1179,7 @@ impl NavIntent {
     ///
     /// A replace stays a replace (so the redirect doesn't add a history entry);
     /// push, back and forward become a push of the redirect target.
-    fn redirect(&self, to: String) -> Self {
+    const fn redirect(&self, to: String) -> Self {
         let op = match self.op {
             NavigateOp::Replace => NavigateOp::Replace,
             NavigateOp::Push | NavigateOp::Back | NavigateOp::Forward => NavigateOp::Push,
@@ -1563,7 +1605,7 @@ fn run_optional_navigation(
 
 /// Spawn the pending navigation's async guards on the foreground executor and
 /// finish the navigation when they resolve.
-fn drive_pending_navigation(cx: &mut App) {
+fn drive_pending_navigation(cx: &App) {
     let Some((id, future)) = cx.global::<GlobalRouter>().take_pending_future() else {
         return;
     };

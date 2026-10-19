@@ -2547,6 +2547,7 @@ dependencies = [
  "gpui-pre",
  "log",
  "lru",
+ "serde",
  "tokio",
  "tracing",
 ]

@@ -116,6 +116,20 @@ impl RouterState {
         self.history.current_path()
     }
 
+    /// Return the navigation history.
+    #[must_use]
+    pub const fn history(&self) -> &History {
+        &self.history
+    }
+
+    /// Replace the navigation history with a saved snapshot.
+    ///
+    /// Returns `false` (and changes nothing) if the snapshot is invalid.
+    pub fn restore_history(&mut self, snapshot: crate::history::HistorySnapshot) -> bool {
+        self.cache.clear();
+        snapshot.apply_to(&mut self.history)
+    }
+
     /// Return a slice of all registered routes (in registration order).
     #[must_use]
     pub fn routes(&self) -> &[Arc<Route>] {
