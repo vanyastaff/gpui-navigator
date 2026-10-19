@@ -712,6 +712,7 @@ impl GlobalRouter {
     }
 
     /// Get a reference to the current error handlers.
+    #[must_use]
     pub const fn error_handlers(&self) -> &ErrorHandlers {
         &self.error_handlers
     }
